@@ -1,0 +1,36 @@
+{
+  "name": "costura-plan-app",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Aplicación web y móvil (PWA + Capacitor) para planificación de operaciones de costura y evacuación por color",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "test": "vitest run --coverage",
+    "lint": "eslint src/",
+    "cap:init": "npx cap init CosturaPlan com.paolaciro.costuraplan --web-dir dist",
+    "cap:android": "npm run build && npx cap sync android && npx cap open android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.1.2",
+    "@capacitor/cli": "^6.1.2",
+    "@capacitor/core": "^6.1.2",
+    "lucide-react": "^0.460.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.3",
+    "@vitest/coverage-v8": "^2.1.5",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.15",
+    "typescript": "~5.6.2",
+    "vite": "^5.4.11",
+    "vitest": "^2.1.5"
+  }
+}

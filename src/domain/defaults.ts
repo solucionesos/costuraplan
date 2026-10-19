@@ -1,0 +1,143 @@
+import { SewingOperation, WorkshopConfig, ProductionOrder } from './types';
+
+export const COLOR_PALETTE = [
+  { name: 'Blanco', hex: '#F8FAFC' },
+  { name: 'Negro', hex: '#1E293B' },
+  { name: 'Azul Oscuro', hex: '#1E3A8A' },
+  { name: 'Azul Rey', hex: '#2563EB' },
+  { name: 'Rojo', hex: '#DC2626' },
+  { name: 'Vino Tinto', hex: '#881337' },
+  { name: 'Verde Militar', hex: '#3F6212' },
+  { name: 'Verde Esmeralda', hex: '#059669' },
+  { name: 'Amarillo', hex: '#EAB308' },
+  { name: 'Rosado', hex: '#EC4899' },
+  { name: 'Gris Jaspe', hex: '#64748B' },
+  { name: 'Beige / Arena', hex: '#D6D3D1' },
+];
+
+export const DEFAULT_OPERATIONS: SewingOperation[] = [
+  {
+    id: 'op-1',
+    name: 'Unir hombros',
+    machine: 'Fileteadora',
+    standardMinutes: 0.4,
+    description: 'Unión de hombros delantero y espalda con fileteadora de 4 hilos y refuerzo.',
+  },
+  {
+    id: 'op-2',
+    name: 'Pegar cuello / rib',
+    machine: 'Fileteadora',
+    standardMinutes: 0.6,
+    description: 'Fijar cuello rib circular o tejido al escote repartiendo medidas.',
+  },
+  {
+    id: 'op-3',
+    name: 'Sesgar / tapacostura cuello',
+    machine: 'Collarín',
+    standardMinutes: 0.5,
+    description: 'Cubrir costura de hombro a hombro en el escote posterior con cinta hiladillo.',
+  },
+  {
+    id: 'op-4',
+    name: 'Pespuntar cuello',
+    machine: 'Plana',
+    standardMinutes: 0.45,
+    description: 'Asentar costura de contorno de cuello a 1/16 pulgada.',
+  },
+  {
+    id: 'op-5',
+    name: 'Pegar mangas',
+    machine: 'Fileteadora',
+    standardMinutes: 0.8,
+    description: 'Pegar par de mangas abiertas en sisa con fileteadora.',
+  },
+  {
+    id: 'op-6',
+    name: 'Cerrar costados',
+    machine: 'Fileteadora',
+    standardMinutes: 0.9,
+    description: 'Cerrar ambos costados desde manga hasta ruedo empatando sisa.',
+  },
+  {
+    id: 'op-7',
+    name: 'Dobladillar mangas',
+    machine: 'Collarín',
+    standardMinutes: 0.65,
+    description: 'Ruedo de ambas mangas a 2 cm en recubridora / collarín.',
+  },
+  {
+    id: 'op-8',
+    name: 'Dobladillar ruedo inferior',
+    machine: 'Collarín',
+    standardMinutes: 0.7,
+    description: 'Ruedo inferior completo de la prenda en collarín.',
+  },
+  {
+    id: 'op-9',
+    name: 'Armar y pegar pechera (Polo)',
+    machine: 'Plana',
+    standardMinutes: 1.5,
+    description: 'Confección de pechera tipo polo con corte y asentado.',
+  },
+  {
+    id: 'op-10',
+    name: 'Hacer ojales y pegar botones',
+    machine: 'Ojaladora',
+    standardMinutes: 0.6,
+    description: 'Elaboración de 2 a 3 ojales en pechera y fijación de botones.',
+  },
+  {
+    id: 'op-11',
+    name: 'Presillar aberturas / bolsillos',
+    machine: 'Presilladora',
+    standardMinutes: 0.35,
+    description: 'Asegurar puntos de tensión en costados o bolsillos.',
+  },
+  {
+    id: 'op-12',
+    name: 'Pulido, revisión y empaque',
+    machine: 'Manual',
+    standardMinutes: 0.8,
+    description: 'Corte de hebras sobrantes, control de calidad por color y doblado.',
+  },
+];
+
+export const DEFAULT_WORKSHOP_CONFIG: WorkshopConfig = {
+  days: [
+    { dayOfWeek: 1, name: 'Lunes', enabled: true, startTime: '07:00', endTime: '17:00', breakMinutes: 60 },
+    { dayOfWeek: 2, name: 'Martes', enabled: true, startTime: '07:00', endTime: '17:00', breakMinutes: 60 },
+    { dayOfWeek: 3, name: 'Miércoles', enabled: true, startTime: '07:00', endTime: '17:00', breakMinutes: 60 },
+    { dayOfWeek: 4, name: 'Jueves', enabled: true, startTime: '07:00', endTime: '17:00', breakMinutes: 60 },
+    { dayOfWeek: 5, name: 'Viernes', enabled: true, startTime: '07:00', endTime: '17:00', breakMinutes: 60 },
+    { dayOfWeek: 6, name: 'Sábado', enabled: true, startTime: '07:00', endTime: '13:00', breakMinutes: 0 },
+    { dayOfWeek: 0, name: 'Domingo', enabled: false, startTime: '08:00', endTime: '12:00', breakMinutes: 0 },
+  ],
+  nonWorkingDates: [],
+};
+
+export function createSampleProductionOrder(todayIso: string, deliveryIso: string): ProductionOrder {
+  return {
+    id: 'prod-demo-1',
+    garmentName: 'Camiseta Básica Cuello Redondo',
+    referenceCode: 'REF-101',
+    receivedDate: todayIso,
+    deliveryDate: deliveryIso,
+    colors: [
+      { id: 'col-1', colorName: 'Blanco', colorHex: '#F8FAFC', units: 120 },
+      { id: 'col-2', colorName: 'Negro', colorHex: '#1E293B', units: 100 },
+      { id: 'col-3', colorName: 'Rojo', colorHex: '#DC2626', units: 80 },
+    ],
+    operations: [
+      { operationId: 'op-1', operationName: 'Unir hombros', machine: 'Fileteadora', minutesPerUnit: 0.4 },
+      { operationId: 'op-2', operationName: 'Pegar cuello / rib', machine: 'Fileteadora', minutesPerUnit: 0.6 },
+      { operationId: 'op-3', operationName: 'Sesgar / tapacostura cuello', machine: 'Collarín', minutesPerUnit: 0.5 },
+      { operationId: 'op-5', operationName: 'Pegar mangas', machine: 'Fileteadora', minutesPerUnit: 0.8 },
+      { operationId: 'op-6', operationName: 'Cerrar costados', machine: 'Fileteadora', minutesPerUnit: 0.9 },
+      { operationId: 'op-7', operationName: 'Dobladillar mangas', machine: 'Collarín', minutesPerUnit: 0.65 },
+      { operationId: 'op-8', operationName: 'Dobladillar ruedo inferior', machine: 'Collarín', minutesPerUnit: 0.7 },
+      { operationId: 'op-12', operationName: 'Pulido, revisión y empaque', machine: 'Manual', minutesPerUnit: 0.8 },
+    ],
+    completedTaskKeys: [],
+    createdAt: todayIso,
+  };
+}

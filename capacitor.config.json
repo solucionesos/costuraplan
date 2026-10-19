@@ -1,0 +1,9 @@
+{
+  "appId": "com.paolaciro.costuraplan",
+  "appName": "CosturaPlan",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https"
+  }
+}

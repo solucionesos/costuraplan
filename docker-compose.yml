@@ -1,0 +1,35 @@
+services:
+  costuraplan-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: costuraplan-app
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+
+    # Límites estrictos de CPU y RAM para consumo mínimo
+    deploy:
+      resources:
+        limits:
+          cpus: "0.10"
+          memory: 24M
+        reservations:
+          cpus: "0.02"
+          memory: 6M
+
+    # Sistema de archivos en solo lectura con tmpfs mínimo en RAM para cero I/O de disco
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:size=2m,noexec,nosuid,nodev
+      - /var/run:size=512k,noexec,nosuid,nodev
+      - /tmp:size=1m,noexec,nosuid,nodev
+
+    security_opt:
+      - no-new-privileges:true
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "500k"
+        max-file: "1"
