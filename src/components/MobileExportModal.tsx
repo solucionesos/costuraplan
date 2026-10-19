@@ -56,7 +56,7 @@ export const MobileExportModal: React.FC<MobileExportModalProps> = ({
   const currentOrigin =
     typeof window !== 'undefined'
       ? window.location.origin
-      : 'http://192.168.1.X:8080';
+      : 'http://192.168.1.X:6000';
 
   const copyText = (text: string, field: 'origin' | 'flag') => {
     if (navigator.clipboard && navigator.clipboard.writeText) {

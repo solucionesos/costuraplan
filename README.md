@@ -11,7 +11,7 @@ Aplicación web progresiva (**PWA**) y lista para empaquetar como **App Nativa A
 ## Comandos Rápidos
 
 ```bash
-# Levantar aplicación en contenedor Docker (disponible en http://localhost:8080)
+# Levantar aplicación en contenedor Docker (disponible en http://localhost:6000)
 docker compose up -d --build
 
 # Iniciar servidor de desarrollo local

@@ -5,7 +5,7 @@ services:
       dockerfile: Dockerfile
     container_name: costuraplan-app
     ports:
-      - "8080:80"
+      - "6000:80"
     restart: unless-stopped
 
     # Límites estrictos de CPU y RAM para consumo mínimo
