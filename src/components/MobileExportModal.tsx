@@ -12,6 +12,7 @@ import {
   Check,
   AlertTriangle,
   Sparkles,
+  RefreshCw,
 } from 'lucide-react';
 import {
   ProductionOrder,
@@ -240,6 +241,36 @@ export const MobileExportModal: React.FC<MobileExportModalProps> = ({
             </ol>
           </div>
         )}
+
+        {/* Force Update Installed PWA Button */}
+        <div className="bg-stone-100 border border-stone-200 rounded-2xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+          <div className="min-w-0">
+            <h4 className="text-xs font-bold text-[#2e1f14]">
+              ¿Ya instalaste la App y quieres aplicar cambios nuevos?
+            </h4>
+            <p className="text-[11px] text-stone-600 mt-0.5 leading-snug">
+              Descarga la última versión del servidor conservando todas tus producciones y operaciones.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={async () => {
+              if ('serviceWorker' in navigator) {
+                const regs = await navigator.serviceWorker.getRegistrations();
+                await Promise.all(regs.map((r) => r.update()));
+              }
+              if ('caches' in window) {
+                const keys = await caches.keys();
+                await Promise.all(keys.map((k) => caches.delete(k)));
+              }
+              window.location.reload();
+            }}
+            className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 bg-[#51344D] hover:bg-[#3B2538] text-white px-3.5 py-2 rounded-xl text-xs font-bold shrink-0 shadow-xs active:scale-95 transition"
+          >
+            <RefreshCw className="w-3.5 h-3.5 text-[#E17726] shrink-0" />
+            <span>Actualizar App Ahora</span>
+          </button>
+        </div>
 
         {/* Option 1: Direct PWA Install */}
         <div className="bg-[#FDF2E9] border border-[#E17726]/40 rounded-2xl p-3.5 space-y-2">

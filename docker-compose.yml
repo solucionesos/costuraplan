@@ -5,6 +5,8 @@ services:
       dockerfile: Dockerfile
     container_name: costuraplan-app
     ports:
+      - "6080:80"
+      - "8080:80"
       - "6000:80"
     restart: unless-stopped
 

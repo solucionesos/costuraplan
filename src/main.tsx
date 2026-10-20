@@ -26,9 +26,18 @@ if ('caches' in window) {
   caches.delete('costuraplan-v1').catch(() => {});
   caches.delete('costuraplan-v2').catch(() => {});
   caches.delete('costuraplan-v3').catch(() => {});
+  caches.delete('costuraplan-v4').catch(() => {});
 }
 
 if ('serviceWorker' in navigator) {
+  let refreshing = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!refreshing) {
+      refreshing = true;
+      window.location.reload();
+    }
+  });
+
   window.addEventListener('load', () => {
     navigator.serviceWorker
       .register('/sw.js')

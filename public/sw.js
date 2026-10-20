@@ -1,4 +1,4 @@
-const CACHE_NAME = 'costuraplan-v4';
+const CACHE_NAME = 'costuraplan-v5';
 const ASSETS = [
   '/',
   '/index.html',
