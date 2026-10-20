@@ -16,6 +16,8 @@ import {
   X,
   ArrowRight,
   RefreshCw,
+  History,
+  EyeOff,
 } from 'lucide-react';
 import {
   ProductionOrder,
@@ -67,12 +69,14 @@ export const CalendarPlanView: React.FC<CalendarPlanViewProps> = ({
     'standard'
   );
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [showPastDays, setShowPastDays] = useState<boolean>(false);
+  const todayIso = getTodayIso();
 
   // Modal state for reporting execution or advancing future operations
   const [reportingBlock, setReportingBlock] =
     useState<ScheduledTaskBlock | null>(null);
   const [isAdvancePickerOpen, setIsAdvancePickerOpen] = useState(false);
-  const [reportDateInput, setReportDateInput] = useState<string>(getTodayIso());
+  const [reportDateInput, setReportDateInput] = useState<string>(todayIso);
   const [unitsExecutedInput, setUnitsExecutedInput] = useState<string>('');
 
   const filteredOrders = useMemo(() => {
@@ -88,19 +92,40 @@ export const CalendarPlanView: React.FC<CalendarPlanViewProps> = ({
     [filteredOrders, workshopConfig, scheduleMode]
   );
 
-  const activeDayPlans = useMemo(
-    () => schedule.days.filter((d) => d.blocks.length > 0 || d.isWorkingDay),
-    [schedule.days]
+  // Split past days (< todayIso) vs current/upcoming days (>= todayIso)
+  const pastDays = useMemo(
+    () => schedule.days.filter((d) => d.date < todayIso),
+    [schedule.days, todayIso]
   );
 
-  const currentSelectedDate =
-    selectedDate && schedule.days.some((d) => d.date === selectedDate)
-      ? selectedDate
-      : activeDayPlans.find((d) => d.blocks.length > 0)?.date ??
-        schedule.days[0]?.date ??
-        null;
+  const visibleDays = useMemo(
+    () =>
+      showPastDays
+        ? schedule.days
+        : schedule.days.filter((d) => d.date >= todayIso),
+    [schedule.days, showPastDays, todayIso]
+  );
 
-  const currentDayPlan = schedule.days.find(
+  const defaultSelectedDate = useMemo(() => {
+    const todayInVisible = visibleDays.find((d) => d.date === todayIso);
+    if (todayInVisible) return todayInVisible.date;
+
+    const firstUpcomingWithBlocks = visibleDays.find(
+      (d) => d.date >= todayIso && d.blocks.length > 0
+    );
+    if (firstUpcomingWithBlocks) return firstUpcomingWithBlocks.date;
+
+    if (visibleDays.length > 0) return visibleDays[0].date;
+
+    return null;
+  }, [visibleDays, todayIso]);
+
+  const currentSelectedDate =
+    selectedDate && visibleDays.some((d) => d.date === selectedDate)
+      ? selectedDate
+      : defaultSelectedDate;
+
+  const currentDayPlan = visibleDays.find(
     (d) => d.date === currentSelectedDate
   );
 
@@ -163,6 +188,9 @@ export const CalendarPlanView: React.FC<CalendarPlanViewProps> = ({
       unitsExecuted: numericUnits,
       plannedUnitsOnBlock: reportingBlock.unitsAssigned,
     });
+    if (reportDateInput < todayIso) {
+      setShowPastDays(true);
+    }
     setSelectedDate(reportDateInput);
     setReportingBlock(null);
   };
@@ -259,7 +287,12 @@ export const CalendarPlanView: React.FC<CalendarPlanViewProps> = ({
                   <button
                     key={`${order.id}-${col.id}`}
                     onClick={() => {
-                      if (finishDate) setSelectedDate(finishDate);
+                      if (finishDate) {
+                        if (finishDate < todayIso) {
+                          setShowPastDays(true);
+                        }
+                        setSelectedDate(finishDate);
+                      }
                     }}
                     className="min-w-[160px] text-left bg-[#f5f2f0] hover:bg-[#FDF2E9] border border-stone-200 rounded-xl p-2.5 transition shrink-0"
                   >
@@ -296,89 +329,191 @@ export const CalendarPlanView: React.FC<CalendarPlanViewProps> = ({
       {/* Horizontal Day Selector Strip */}
       {schedule.days.length > 0 ? (
         <>
-          <div className="flex gap-2 overflow-x-auto pb-1.5">
-            {schedule.days.map((day) => {
-              const isSelected = day.date === currentSelectedDate;
-              const dayNum = day.date.split('-')[2];
-              const monthNum = day.date.split('-')[1];
-              const hasBlocks = day.blocks.length > 0;
-              const hasLateBlock = day.blocks.some((b) => b.isAfterDeadline);
-              const hasExecutedReport = day.blocks.some(
-                (b) => b.isExecutedReport
-              );
+          {/* Past Days Toggle Bar & Jump to Today */}
+          {(pastDays.length > 0 ||
+            schedule.days.some((d) => d.date === todayIso)) && (
+            <div className="flex flex-wrap items-center justify-between gap-2 bg-white px-3.5 py-2.5 rounded-2xl border border-stone-200 shadow-2xs">
+              <div className="flex items-center gap-2 text-xs text-stone-600">
+                <CalendarIcon className="w-4 h-4 text-[#E17726] shrink-0" />
+                <span>
+                  Día actual: <strong className="text-[#2e1f14]">{todayIso}</strong>
+                </span>
+                {!showPastDays && pastDays.length > 0 && (
+                  <span className="text-[11px] text-stone-400">
+                    ({pastDays.length} {pastDays.length === 1 ? 'día anterior oculto' : 'días anteriores ocultos'})
+                  </span>
+                )}
+              </div>
 
-              return (
-                <button
-                  key={day.date}
-                  onClick={() => setSelectedDate(day.date)}
-                  className={`min-w-[78px] rounded-2xl p-2.5 border text-center transition flex flex-col items-center justify-between shrink-0 ${
-                    isSelected
-                      ? 'bg-[#51344D] text-white border-[#E17726] border-2 shadow-md scale-[1.02]'
-                      : hasBlocks
-                      ? 'bg-white text-[#2e1f14] border-stone-200 hover:border-[#E17726]'
-                      : 'bg-stone-100 text-stone-400 border-stone-200/60'
-                  }`}
-                >
-                  <span
-                    className={`text-[10px] font-semibold uppercase ${
-                      isSelected ? 'text-[#E17726]' : 'text-stone-500'
+              <div className="flex flex-wrap items-center gap-2">
+                {schedule.days.some((d) => d.date === todayIso) &&
+                  currentSelectedDate !== todayIso && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedDate(todayIso)}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-[#FDF2E9] hover:bg-[#E17726]/20 text-[#E17726] border border-[#E17726]/30 text-xs font-bold transition"
+                    >
+                      Ir a Hoy
+                    </button>
+                  )}
+
+                {pastDays.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nextVal = !showPastDays;
+                      setShowPastDays(nextVal);
+                      if (!nextVal && selectedDate && selectedDate < todayIso) {
+                        setSelectedDate(todayIso);
+                      }
+                    }}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition shadow-2xs ${
+                      showPastDays
+                        ? 'bg-[#51344D] text-white hover:bg-[#3B2538]'
+                        : 'bg-stone-100 hover:bg-stone-200 text-[#2e1f14] border border-stone-300'
                     }`}
                   >
-                    {day.dayName.slice(0, 3)}
-                  </span>
-                  <span className="text-base font-extrabold my-0.5">
-                    {dayNum}/{monthNum}
-                  </span>
-
-                  {/* Color dots worked on that day */}
-                  <div className="flex items-center gap-1 mt-1 h-3">
-                    {Array.from(
-                      new Set(day.blocks.map((b) => b.colorHex))
-                    ).map((hex, i) => (
-                      <span
-                        key={i}
-                        className="w-2.5 h-2.5 rounded-full border border-white/80 shadow-2xs"
-                        style={{ backgroundColor: hex }}
-                      />
-                    ))}
-                    {!hasBlocks && (
-                      <span className="text-[9px] opacity-75">Libre</span>
+                    {showPastDays ? (
+                      <>
+                        <EyeOff className="w-3.5 h-3.5 shrink-0" />
+                        <span>Ocultar programación anterior</span>
+                      </>
+                    ) : (
+                      <>
+                        <History className="w-3.5 h-3.5 text-[#E17726] shrink-0" />
+                        <span>
+                          Mostrar programación anterior ({pastDays.length})
+                        </span>
+                      </>
                     )}
-                  </div>
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
 
-                  {day.colorsEvacuated.length > 0 && (
-                    <span
-                      className={`mt-1 text-[9px] font-bold px-1.5 py-0.2 rounded-full ${
-                        isSelected
-                          ? 'bg-emerald-400 text-slate-950'
-                          : 'bg-emerald-100 text-emerald-800'
-                      }`}
-                    >
-                      ★ {day.colorsEvacuated.length} sale
-                    </span>
-                  )}
+          {visibleDays.length > 0 ? (
+            <div className="flex gap-2 overflow-x-auto pb-1.5">
+              {visibleDays.map((day) => {
+                const isSelected = day.date === currentSelectedDate;
+                const isToday = day.date === todayIso;
+                const isPast = day.date < todayIso;
+                const dayNum = day.date.split('-')[2];
+                const monthNum = day.date.split('-')[1];
+                const hasBlocks = day.blocks.length > 0;
+                const hasLateBlock = day.blocks.some((b) => b.isAfterDeadline);
+                const hasExecutedReport = day.blocks.some(
+                  (b) => b.isExecutedReport
+                );
 
-                  {hasExecutedReport && (
-                    <span
-                      className={`mt-1 text-[9px] font-bold px-1.5 rounded-full ${
-                        isSelected
-                          ? 'bg-[#E17726] text-white'
-                          : 'bg-[#FDF2E9] text-[#E17726]'
-                      }`}
-                    >
-                      ✓ Reporte
+                return (
+                  <button
+                    key={day.date}
+                    onClick={() => setSelectedDate(day.date)}
+                    className={`min-w-[78px] rounded-2xl p-2.5 border text-center transition flex flex-col items-center justify-between shrink-0 ${
+                      isSelected
+                        ? 'bg-[#51344D] text-white border-[#E17726] border-2 shadow-md scale-[1.02]'
+                        : isToday
+                        ? 'bg-[#FDF2E9] text-[#2e1f14] border-[#E17726] border-2 shadow-xs'
+                        : isPast
+                        ? 'bg-stone-100/90 text-stone-500 border-stone-200 hover:border-stone-400'
+                        : hasBlocks
+                        ? 'bg-white text-[#2e1f14] border-stone-200 hover:border-[#E17726]'
+                        : 'bg-stone-100 text-stone-400 border-stone-200/60'
+                    }`}
+                  >
+                    <div className="flex items-center gap-1">
+                      <span
+                        className={`text-[10px] font-semibold uppercase ${
+                          isSelected
+                            ? 'text-[#E17726]'
+                            : isToday
+                            ? 'text-[#E17726] font-extrabold'
+                            : 'text-stone-500'
+                        }`}
+                      >
+                        {day.dayName.slice(0, 3)}
+                      </span>
+                      {isToday && (
+                        <span
+                          className={`text-[8px] font-extrabold px-1 rounded-sm uppercase ${
+                            isSelected
+                              ? 'bg-[#E17726] text-white'
+                              : 'bg-[#E17726] text-white'
+                          }`}
+                        >
+                          Hoy
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-base font-extrabold my-0.5">
+                      {dayNum}/{monthNum}
                     </span>
-                  )}
 
-                  {hasLateBlock && (
-                    <span className="mt-1 text-[9px] font-bold px-1.5 rounded-full bg-rose-100 text-rose-700">
-                      Extra plazo
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
+                    {/* Color dots worked on that day */}
+                    <div className="flex items-center gap-1 mt-1 h-3">
+                      {Array.from(
+                        new Set(day.blocks.map((b) => b.colorHex))
+                      ).map((hex, i) => (
+                        <span
+                          key={i}
+                          className="w-2.5 h-2.5 rounded-full border border-white/80 shadow-2xs"
+                          style={{ backgroundColor: hex }}
+                        />
+                      ))}
+                      {!hasBlocks && (
+                        <span className="text-[9px] opacity-75">Libre</span>
+                      )}
+                    </div>
+
+                    {day.colorsEvacuated.length > 0 && (
+                      <span
+                        className={`mt-1 text-[9px] font-bold px-1.5 py-0.2 rounded-full ${
+                          isSelected
+                            ? 'bg-emerald-400 text-slate-950'
+                            : 'bg-emerald-100 text-emerald-800'
+                        }`}
+                      >
+                        ★ {day.colorsEvacuated.length} sale
+                      </span>
+                    )}
+
+                    {hasExecutedReport && (
+                      <span
+                        className={`mt-1 text-[9px] font-bold px-1.5 rounded-full ${
+                          isSelected
+                            ? 'bg-[#E17726] text-white'
+                            : 'bg-[#FDF2E9] text-[#E17726]'
+                        }`}
+                      >
+                        ✓ Reporte
+                      </span>
+                    )}
+
+                    {hasLateBlock && (
+                      <span className="mt-1 text-[9px] font-bold px-1.5 rounded-full bg-rose-100 text-rose-700">
+                        Extra plazo
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="bg-white rounded-2xl p-6 text-center border border-stone-200 space-y-3">
+              <p className="text-xs text-stone-600">
+                Todas las fechas de esta programación son anteriores al día actual (<strong>{todayIso}</strong>).
+              </p>
+              <button
+                type="button"
+                onClick={() => setShowPastDays(true)}
+                className="inline-flex items-center gap-1.5 bg-[#51344D] hover:bg-[#3B2538] text-white text-xs font-bold px-4 py-2 rounded-xl shadow-xs transition"
+              >
+                <History className="w-4 h-4 text-[#E17726]" />
+                <span>Mostrar programación anterior ({pastDays.length} días)</span>
+              </button>
+            </div>
+          )}
 
           {/* Selected Day Detailed Schedule */}
           {currentDayPlan && (
