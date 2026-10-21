@@ -53,6 +53,7 @@ export function sortSizes(
   const direction = sortOrder === 'desc' ? -1 : 1;
   return [...sizes]
     .filter((s) => s.units > 0 && s.size.trim().length > 0)
+    .map((s) => ({ ...s, units: Math.ceil(s.units) }))
     .sort((a, b) => {
       const rankA = getSizeRank(a.size);
       const rankB = getSizeRank(b.size);
@@ -73,15 +74,18 @@ export function getOrderedColorSizes(
       return valid;
     }
   }
-  return color.units > 0 ? [{ size: 'Única', units: color.units }] : [];
+  return color.units > 0 ? [{ size: 'Única', units: Math.ceil(color.units) }] : [];
 }
 
 export function getColorTotalUnits(color: ColorBatch): number {
   if (color.sizes && color.sizes.length > 0) {
-    const sum = color.sizes.reduce((acc, s) => acc + Math.max(0, s.units), 0);
+    const sum = color.sizes.reduce(
+      (acc, s) => acc + Math.max(0, Math.ceil(s.units)),
+      0
+    );
     if (sum > 0) return sum;
   }
-  return Math.max(0, color.units);
+  return Math.max(0, Math.ceil(color.units));
 }
 
 export function parseTimeToMinutes(clock: string): number {
@@ -307,7 +311,7 @@ export function validateExecutionReport(
   );
   const maxAllowedUnits = Math.max(
     0,
-    Math.round((targetTotalUnits - alreadyExecuted) * 10) / 10
+    Math.ceil(targetTotalUnits - alreadyExecuted)
   );
 
   const sizeLabel = matchingSize ? ` - Talla ${matchingSize.size}` : '';
@@ -323,10 +327,13 @@ export function validateExecutionReport(
     };
   }
 
-  if (params.unitsExecuted > maxAllowedUnits + 0.01) {
+  const normalizedUnitsExecuted = Math.ceil(params.unitsExecuted);
+  const normalizedPlannedUnits = Math.ceil(params.plannedUnitsOnBlock);
+
+  if (normalizedUnitsExecuted > maxAllowedUnits) {
     return {
       valid: false,
-      error: `No puedes reportar ${params.unitsExecuted} uds porque solo quedan ${maxAllowedUnits} uds pendientes para ${op.operationName} (${color.colorName}${sizeLabel}).`,
+      error: `No puedes reportar ${normalizedUnitsExecuted} uds porque solo quedan ${maxAllowedUnits} uds pendientes para ${op.operationName} (${color.colorName}${sizeLabel}).`,
       noveltyType: 'exact',
       shortfallUnits: 0,
       maxAllowedUnits,
@@ -335,7 +342,7 @@ export function validateExecutionReport(
   }
 
   const isAdvance = params.reportDate < params.scheduledSourceDate;
-  if (isAdvance && params.unitsExecuted <= 0) {
+  if (isAdvance && normalizedUnitsExecuted <= 0) {
     return {
       valid: false,
       error: 'Para adelantar una operación de un día futuro debes ingresar al menos 1 unidad ejecutada.',
@@ -352,13 +359,13 @@ export function validateExecutionReport(
       noveltyType: 'advance',
       shortfallUnits: 0,
       maxAllowedUnits,
-      summaryMessage: `Estás reportando el día ${params.reportDate} un adelanto de ${params.unitsExecuted} uds de "${op.operationName}" (Color ${color.colorName}${sizeLabel}) que estaba programada para el día ${params.scheduledSourceDate}. Se descontarán estas unidades del día futuro y se recalculará todo el calendario.`,
+      summaryMessage: `Estás reportando el día ${params.reportDate} un adelanto de ${normalizedUnitsExecuted} uds de "${op.operationName}" (Color ${color.colorName}${sizeLabel}) que estaba programada para el día ${params.scheduledSourceDate}. Se descontarán estas unidades del día futuro y se recalculará todo el calendario.`,
     };
   }
 
   const shortfall = Math.max(
     0,
-    Math.round((params.plannedUnitsOnBlock - params.unitsExecuted) * 10) / 10
+    normalizedPlannedUnits - normalizedUnitsExecuted
   );
 
   if (shortfall > 0) {
@@ -367,18 +374,18 @@ export function validateExecutionReport(
       noveltyType: 'shortfall',
       shortfallUnits: shortfall,
       maxAllowedUnits,
-      summaryMessage: `Se ejecutaron ${params.unitsExecuted} uds de las ${params.plannedUnitsOnBlock} uds programadas para el día ${params.reportDate}. Las ${shortfall} unidades faltantes de "${op.operationName}" (Color ${color.colorName}${sizeLabel}) se trasladarán automáticamente al siguiente día hábil y se reprogramará el calendario.`,
+      summaryMessage: `Se ejecutaron ${normalizedUnitsExecuted} uds de las ${normalizedPlannedUnits} uds programadas para el día ${params.reportDate}. Las ${shortfall} unidades faltantes de "${op.operationName}" (Color ${color.colorName}${sizeLabel}) se trasladarán automáticamente al siguiente día hábil y se reprogramará el calendario.`,
     };
   }
 
-  if (params.unitsExecuted > params.plannedUnitsOnBlock) {
-    const extra = Math.round((params.unitsExecuted - params.plannedUnitsOnBlock) * 10) / 10;
+  if (normalizedUnitsExecuted > normalizedPlannedUnits) {
+    const extra = normalizedUnitsExecuted - normalizedPlannedUnits;
     return {
       valid: true,
       noveltyType: 'overproduction',
       shortfallUnits: 0,
       maxAllowedUnits,
-      summaryMessage: `Se ejecutaron ${params.unitsExecuted} uds (${extra} uds más de las ${params.plannedUnitsOnBlock} uds programadas el ${params.reportDate}). Se adelantará el saldo restante en el calendario.`,
+      summaryMessage: `Se ejecutaron ${normalizedUnitsExecuted} uds (${extra} uds más de las ${normalizedPlannedUnits} uds programadas el ${params.reportDate}). Se adelantará el saldo restante en el calendario.`,
     };
   }
 
@@ -387,7 +394,7 @@ export function validateExecutionReport(
     noveltyType: 'exact',
     shortfallUnits: 0,
     maxAllowedUnits,
-    summaryMessage: `Se completaron las ${params.unitsExecuted} uds programadas de "${op.operationName}" (Color ${color.colorName}${sizeLabel}) en el día ${params.reportDate}.`,
+    summaryMessage: `Se completaron las ${normalizedUnitsExecuted} uds programadas de "${op.operationName}" (Color ${color.colorName}${sizeLabel}) en el día ${params.reportDate}.`,
   };
 }
 
@@ -403,9 +410,11 @@ export function applyExecutionReportToOrder(
     plannedUnitsOnBlock: number;
   }
 ): ProductionOrder {
+  const normalizedUnitsExecuted = Math.ceil(params.unitsExecuted);
+  const normalizedPlannedUnits = Math.ceil(params.plannedUnitsOnBlock);
   const isShortfall =
     params.reportDate >= params.scheduledSourceDate &&
-    params.unitsExecuted < params.plannedUnitsOnBlock;
+    normalizedUnitsExecuted < normalizedPlannedUnits;
 
   const newLog: ExecutionLog = {
     id: `exec-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -414,8 +423,8 @@ export function applyExecutionReportToOrder(
     colorId: params.colorId,
     size: params.size,
     operationId: params.operationId,
-    unitsExecuted: Math.round(params.unitsExecuted * 10) / 10,
-    plannedUnitsAtReport: params.plannedUnitsOnBlock,
+    unitsExecuted: normalizedUnitsExecuted,
+    plannedUnitsAtReport: normalizedPlannedUnits,
     shiftRemainingToNextDay: isShortfall,
     createdAt: new Date().toISOString(),
   };
@@ -623,7 +632,7 @@ export function buildProductionSchedule(
       const prevDone = runningUnitsByKey.get(key) ?? 0;
       const effectiveUnits = Math.max(
         0,
-        Math.min(sizeMaxUnits - prevDone, log.unitsExecuted)
+        Math.min(sizeMaxUnits - prevDone, Math.ceil(log.unitsExecuted))
       );
       const newDone = prevDone + effectiveUnits;
       runningUnitsByKey.set(key, newDone);
@@ -651,7 +660,7 @@ export function buildProductionSchedule(
         log.shiftRemainingToNextDay &&
         log.plannedUnitsAtReport !== undefined &&
         log.unitsExecuted < log.plannedUnitsAtReport
-          ? Math.round((log.plannedUnitsAtReport - log.unitsExecuted) * 10) / 10
+          ? Math.ceil(log.plannedUnitsAtReport - log.unitsExecuted)
           : 0;
 
       const allColorOpsDone =
@@ -803,7 +812,7 @@ export function buildProductionSchedule(
           );
           const pendingUnits = Math.max(
             0,
-            Math.round((sizeItem.units - executedUnits) * 1000) / 1000
+            Math.ceil(sizeItem.units - executedUnits)
           );
 
           for (const l of logs) {
@@ -824,15 +833,14 @@ export function buildProductionSchedule(
             }
           }
 
-          if (pendingUnits <= 0.001) {
+          if (pendingUnits <= 0) {
             continue;
           }
 
-          let minutesLeftForOp =
-            Math.round(pendingUnits * op.minutesPerUnit * 1000) / 1000;
+          let unitsLeftForOp = pendingUnits;
 
           let safetyCounter = 0;
-          while (minutesLeftForOp > 0.001 && safetyCounter < 500) {
+          while (unitsLeftForOp > 0 && safetyCounter < 500) {
             safetyCounter += 1;
             const dayPlan = ensureDayPlan(cursorDate);
 
@@ -868,17 +876,18 @@ export function buildProductionSchedule(
               }
             }
 
-            const allocatedMinutes = Math.min(
-              availableForOrderToday,
-              minutesLeftForOp
+            // Always schedule whole integer operation units rounded UP (Math.ceil)
+            const rawUnitsForToday = availableForOrderToday / op.minutesPerUnit;
+            const unitsAssigned = Math.min(
+              unitsLeftForOp,
+              Math.max(1, Math.ceil(rawUnitsForToday - 1e-9))
             );
+            const allocatedMinutes =
+              Math.round(unitsAssigned * op.minutesPerUnit * 100) / 100;
             const startUsed = dayPlan.usedMinutes;
             const clocks = computeClocks(cursorDate, startUsed, allocatedMinutes);
 
-            minutesLeftForOp = Math.max(
-              0,
-              Math.round((minutesLeftForOp - allocatedMinutes) * 1000) / 1000
-            );
+            unitsLeftForOp = Math.max(0, unitsLeftForOp - unitsAssigned);
             dayPlan.usedMinutes =
               Math.round((dayPlan.usedMinutes + allocatedMinutes) * 100) / 100;
             dayPlan.remainingMinutes = Math.max(
@@ -891,11 +900,9 @@ export function buildProductionSchedule(
               (orderPendingUsedByDate.get(cursorDate) ?? 0) + allocatedMinutes
             );
 
-            const isOpDone = minutesLeftForOp <= 0.001;
+            const isOpDone = unitsLeftForOp === 0;
             const isSizeDone = isOpDone && isLastOpOfSize;
             const isColorDone = isOpDone && isLastOpOfColor;
-            const unitsAssigned =
-              Math.round((allocatedMinutes / op.minutesPerUnit) * 10) / 10;
 
             const taskKey = isSingleUnicaSize
               ? `${order.id}__${color.id}__${op.operationId}__${cursorDate}`

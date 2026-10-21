@@ -441,13 +441,17 @@ describe('Color-Batch Evacuation & Dynamic Re-Scheduling Engine', () => {
       [lightOrderByDeadline],
       DEFAULT_WORKSHOP_CONFIG
     );
-    // 300 min / 3 days = 100 min per day on Mon, Tue, and Wed!
+    // 300 min / 3 days = 100 min quota per day on Mon, Tue, and Wed!
+    // Since op-a takes 3 min/unit, 100 / 3 = 33.333... uds -> rounded UP (Math.ceil) to 34 uds (102 min) on Mon!
+    // On Tue: remaining 16 uds of op-a (48 min) + ceil((100 - 48) / 3) = 18 uds of op-b (54 min) = 102 min!
+    // On Wed: remaining 32 uds of op-b (96 min)!
     const mon = resByDeadline.days.find((d) => d.date === '2026-10-19')!;
     const tue = resByDeadline.days.find((d) => d.date === '2026-10-20')!;
     const wed = resByDeadline.days.find((d) => d.date === '2026-10-21')!;
-    expect(mon.usedMinutes).toBe(100);
-    expect(tue.usedMinutes).toBe(100);
-    expect(wed.usedMinutes).toBe(100);
+    expect(mon.blocks[0].unitsAssigned).toBe(34);
+    expect(mon.usedMinutes).toBe(102);
+    expect(tue.usedMinutes).toBe(102);
+    expect(wed.usedMinutes).toBe(96);
     expect(resByDeadline.summaries['ord-light-deadline'].estimatedCompletionDate).toBe(
       '2026-10-21'
     );
@@ -607,5 +611,33 @@ describe('Color-Batch Evacuation & Dynamic Re-Scheduling Engine', () => {
         units: 25,
       })
     ).toEqual([{ size: 'Única', units: 25 }]);
+  });
+
+  it('always schedules whole integer operation units rounded UP (Math.ceil) and never fractional/decimal operations', () => {
+    // 540 min capacity on Monday. If an operation takes 7 min/unit and has 100 units:
+    // 540 / 7 = 77.1428... units -> must round UP (Math.ceil) to 78 integer units on Monday,
+    // leaving 22 integer units on Tuesday!
+    const nonDivisibleOrder: ProductionOrder = {
+      ...sampleOrder,
+      id: 'ord-ceil-int',
+      colors: [{ id: 'c-1', colorName: 'Verde', colorHex: '#16A34A', units: 100 }],
+      operations: [
+        {
+          operationId: 'op-7min',
+          operationName: 'Operación 7 min',
+          machine: 'Plana',
+          minutesPerUnit: 7,
+        },
+      ],
+    };
+
+    const res = buildProductionSchedule([nonDivisibleOrder], DEFAULT_WORKSHOP_CONFIG);
+    const allBlocks = res.days.flatMap((d) => d.blocks);
+    expect(allBlocks.length).toBe(2);
+    for (const block of allBlocks) {
+      expect(Number.isInteger(block.unitsAssigned)).toBe(true);
+    }
+    expect(allBlocks[0].unitsAssigned).toBe(78); // ceil(540 / 7) = 78
+    expect(allBlocks[1].unitsAssigned).toBe(22); // 100 - 78 = 22
   });
 });

@@ -162,7 +162,8 @@ export const CalendarPlanView: React.FC<CalendarPlanViewProps> = ({
     if (!reportingBlock) return null;
     const order = productions.find((p) => p.id === reportingBlock.productionId);
     if (!order) return null;
-    const numericUnits = parseFloat(unitsExecutedInput);
+    const rawUnits = parseFloat(unitsExecutedInput);
+    const numericUnits = isNaN(rawUnits) ? NaN : Math.ceil(rawUnits);
     return validateExecutionReport(order, {
       reportDate: reportDateInput,
       scheduledSourceDate: reportingBlock.date,
@@ -179,7 +180,7 @@ export const CalendarPlanView: React.FC<CalendarPlanViewProps> = ({
     if (!reportingBlock || !currentValidation || !currentValidation.valid) {
       return;
     }
-    const numericUnits = parseFloat(unitsExecutedInput);
+    const numericUnits = Math.ceil(parseFloat(unitsExecutedInput));
     onSubmitExecutionReport(reportingBlock.productionId, {
       reportDate: reportDateInput,
       scheduledSourceDate: reportingBlock.date,
@@ -970,7 +971,7 @@ export const CalendarPlanView: React.FC<CalendarPlanViewProps> = ({
                 </div>
                 <input
                   type="number"
-                  step="any"
+                  step="1"
                   min="0"
                   max={
                     currentValidation?.maxAllowedUnits ??
@@ -989,12 +990,12 @@ export const CalendarPlanView: React.FC<CalendarPlanViewProps> = ({
                     type="button"
                     onClick={() =>
                       setUnitsExecutedInput(
-                        String(Math.floor(reportingBlock.unitsAssigned / 2))
+                        String(Math.ceil(reportingBlock.unitsAssigned / 2))
                       )
                     }
                     className="px-2.5 py-1 rounded-lg bg-stone-100 hover:bg-stone-200 text-[#2e1f14] text-xs font-medium"
                   >
-                    Mitad ({Math.floor(reportingBlock.unitsAssigned / 2)} uds)
+                    Mitad ({Math.ceil(reportingBlock.unitsAssigned / 2)} uds)
                   </button>
                   <button
                     type="button"
