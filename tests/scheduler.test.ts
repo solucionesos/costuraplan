@@ -12,11 +12,14 @@ import {
   getAvailableMinutesForDate,
   getDayOfWeekIso,
   getDayScheduleForDate,
+  getOrderedColorSizes,
+  getSizeRank,
   listDatesBetweenIso,
   parseIsoDateUTC,
   parseTimeToMinutes,
   removeExecutionLog,
   reorderProductionOperations,
+  sortSizes,
   validateExecutionReport,
 } from '../src/domain/scheduler';
 import {
@@ -461,5 +464,148 @@ describe('Color-Batch Evacuation & Dynamic Re-Scheduling Engine', () => {
     expect(resAsap.summaries['ord-light-asap'].estimatedCompletionDate).toBe(
       '2026-10-19'
     );
+  });
+
+  it('evacuates each color and within each color organizes by size in ascending or descending order (including Talla Única)', () => {
+    expect(getSizeRank('Única')).toBe(0);
+    expect(getSizeRank('8')).toBeLessThan(getSizeRank('12'));
+    expect(getSizeRank('S')).toBeLessThan(getSizeRank('XL'));
+    expect(getSizeRank('Especial-A')).toBe(500);
+
+    const mixedSizes = [
+      { size: 'XL', units: 10 },
+      { size: 'S', units: 20 },
+      { size: 'Única', units: 5 },
+      { size: 'M', units: 15 },
+      { size: '8', units: 10 },
+      { size: 'Especial-B', units: 5 },
+      { size: 'Especial-A', units: 5 },
+    ];
+
+    const asc = sortSizes(mixedSizes, 'asc').map((s) => s.size);
+    expect(asc).toEqual([
+      'Única',
+      '8',
+      'S',
+      'M',
+      'XL',
+      'Especial-A',
+      'Especial-B',
+    ]);
+
+    const desc = sortSizes(mixedSizes, 'desc').map((s) => s.size);
+    expect(desc).toEqual([
+      'Especial-B',
+      'Especial-A',
+      'XL',
+      'M',
+      'S',
+      '8',
+      'Única',
+    ]);
+
+    const multiSizeOrderAsc: ProductionOrder = {
+      ...sampleOrder,
+      id: 'ord-sizes-asc',
+      sizeSortOrder: 'asc',
+      colors: [
+        {
+          id: 'c-blanco',
+          colorName: 'Blanco',
+          colorHex: '#FFFFFF',
+          units: 60,
+          sizes: [
+            { size: 'L', units: 20 },
+            { size: 'S', units: 20 },
+            { size: 'M', units: 20 },
+          ],
+        },
+        {
+          id: 'c-negro',
+          colorName: 'Negro',
+          colorHex: '#000000',
+          units: 30,
+          sizes: [{ size: 'Única', units: 30 }],
+        },
+      ],
+    };
+
+    const schedAsc = buildProductionSchedule(
+      [multiSizeOrderAsc],
+      DEFAULT_WORKSHOP_CONFIG
+    );
+    const monAsc = schedAsc.days.find((d) => d.date === '2026-10-19')!;
+    const blancoSizesAsc = monAsc.blocks
+      .filter((b) => b.colorId === 'c-blanco' && b.operationId === 'op-a')
+      .map((b) => b.size);
+    expect(blancoSizesAsc).toEqual(['S', 'M', 'L']);
+
+    // Now test Descendente ('desc')
+    const multiSizeOrderDesc: ProductionOrder = {
+      ...multiSizeOrderAsc,
+      id: 'ord-sizes-desc',
+      sizeSortOrder: 'desc',
+    };
+    const schedDesc = buildProductionSchedule(
+      [multiSizeOrderDesc],
+      DEFAULT_WORKSHOP_CONFIG
+    );
+    const monDesc = schedDesc.days.find((d) => d.date === '2026-10-19')!;
+    const blancoSizesDesc = monDesc.blocks
+      .filter((b) => b.colorId === 'c-blanco' && b.operationId === 'op-a')
+      .map((b) => b.size);
+    expect(blancoSizesDesc).toEqual(['L', 'M', 'S']);
+
+    // Validate & apply execution report for a specific size
+    const valSize = validateExecutionReport(multiSizeOrderDesc, {
+      reportDate: '2026-10-19',
+      scheduledSourceDate: '2026-10-19',
+      colorId: 'c-blanco',
+      size: 'L',
+      operationId: 'op-a',
+      unitsExecuted: 15,
+      plannedUnitsOnBlock: 20,
+    });
+    expect(valSize.valid).toBe(true);
+    expect(valSize.shortfallUnits).toBe(5);
+
+    const updatedWithSizeReport = applyExecutionReportToOrder(
+      multiSizeOrderDesc,
+      {
+        reportDate: '2026-10-19',
+        scheduledSourceDate: '2026-10-19',
+        colorId: 'c-blanco',
+        size: 'L',
+        operationId: 'op-a',
+        unitsExecuted: 15,
+        plannedUnitsOnBlock: 20,
+      }
+    );
+    const schedAfterSizeReport = buildProductionSchedule(
+      [updatedWithSizeReport],
+      DEFAULT_WORKSHOP_CONFIG
+    );
+    const tueDesc = schedAfterSizeReport.days.find(
+      (d) => d.date === '2026-10-20'
+    )!;
+    expect(
+      tueDesc.blocks.some(
+        (b) =>
+          b.colorId === 'c-blanco' &&
+          b.size === 'L' &&
+          b.operationId === 'op-a' &&
+          b.unitsAssigned === 5
+      )
+    ).toBe(true);
+
+    // Fallback when color has no sizes array
+    expect(
+      getOrderedColorSizes({
+        id: 'c-x',
+        colorName: 'Gris',
+        colorHex: '#ccc',
+        units: 25,
+      })
+    ).toEqual([{ size: 'Única', units: 25 }]);
   });
 });

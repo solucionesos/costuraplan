@@ -7,9 +7,8 @@ import {
   Smartphone,
   Mail,
   MessageCircle,
-  AlertTriangle,
-  RefreshCw,
   Download,
+  CheckCircle2,
 } from 'lucide-react';
 import {
   loadOperations,
@@ -49,14 +48,8 @@ export const App: React.FC = () => {
     loadProductions()
   );
 
-  // Snapshot of the planning state currently active in the schedule
-  const [scheduledProductions, setScheduledProductions] = useState<
-    ProductionOrder[]
-  >(() => productions);
-  const [scheduledWorkshopConfig, setScheduledWorkshopConfig] =
-    useState<WorkshopConfig>(() => workshopConfig);
-  const [hasUnrecalculatedChanges, setHasUnrecalculatedChanges] =
-    useState<boolean>(false);
+  // Brief non-intrusive toast when schedule is automatically recalculated
+  const [autoRecalcNotice, setAutoRecalcNotice] = useState<string | null>(null);
 
   const [selectedProductionId, setSelectedProductionId] = useState<
     string | 'ALL'
@@ -95,6 +88,13 @@ export const App: React.FC = () => {
     };
   }, []);
 
+  const triggerAutoRecalcFeedback = (message: string) => {
+    setAutoRecalcNotice(message);
+    window.setTimeout(() => {
+      setAutoRecalcNotice((prev) => (prev === message ? null : prev));
+    }, 2400);
+  };
+
   const handleTriggerInstall = async () => {
     if (!installPrompt) {
       setIsMobileModalOpen(true);
@@ -111,41 +111,48 @@ export const App: React.FC = () => {
   const handleSaveOperations = (nextOps: SewingOperation[]) => {
     setOperations(nextOps);
     saveOperations(nextOps);
+
+    // Sync updated catalog operation names/machines to existing orders automatically
+    const opMap = new Map(nextOps.map((o) => [o.id, o]));
+    const syncedOrders = productions.map((order) => ({
+      ...order,
+      operations: order.operations.map((item) => {
+        const cat = opMap.get(item.operationId);
+        if (!cat) return item;
+        return {
+          ...item,
+          operationName: cat.name,
+          machine: cat.machine,
+        };
+      }),
+    }));
+    setProductions(syncedOrders);
+    saveProductions(syncedOrders);
   };
 
   const handleSaveWorkshop = (nextConfig: WorkshopConfig) => {
     setWorkshopConfig(nextConfig);
     saveWorkshopConfig(nextConfig);
-    setHasUnrecalculatedChanges(true);
+    triggerAutoRecalcFeedback('Programación recalculada automáticamente con el nuevo horario');
   };
 
   const handleSaveProductions = (nextOrders: ProductionOrder[]) => {
     setProductions(nextOrders);
     saveProductions(nextOrders);
-    setHasUnrecalculatedChanges(true);
-  };
-
-  const handleRecalculateSchedule = () => {
-    setScheduledProductions(productions);
-    setScheduledWorkshopConfig(workshopConfig);
-    setHasUnrecalculatedChanges(false);
+    triggerAutoRecalcFeedback('Programación actualizada automáticamente');
   };
 
   const handleToggleTaskComplete = (productionId: string, taskKey: string) => {
-    const toggleList = (list: ProductionOrder[]) =>
-      list.map((order) => {
-        if (order.id !== productionId) return order;
-        const exists = order.completedTaskKeys.includes(taskKey);
-        const nextKeys = exists
-          ? order.completedTaskKeys.filter((k) => k !== taskKey)
-          : [...order.completedTaskKeys, taskKey];
-        return { ...order, completedTaskKeys: nextKeys };
-      });
-
-    const updatedLive = toggleList(productions);
-    setProductions(updatedLive);
-    saveProductions(updatedLive);
-    setScheduledProductions((prev) => toggleList(prev));
+    const updated = productions.map((order) => {
+      if (order.id !== productionId) return order;
+      const exists = order.completedTaskKeys.includes(taskKey);
+      const nextKeys = exists
+        ? order.completedTaskKeys.filter((k) => k !== taskKey)
+        : [...order.completedTaskKeys, taskKey];
+      return { ...order, completedTaskKeys: nextKeys };
+    });
+    setProductions(updated);
+    saveProductions(updated);
   };
 
   const handleSubmitExecutionReport = (
@@ -154,6 +161,7 @@ export const App: React.FC = () => {
       reportDate: string;
       scheduledSourceDate: string;
       colorId: string;
+      size?: string;
       operationId: string;
       unitsExecuted: number;
       plannedUnitsOnBlock: number;
@@ -226,52 +234,35 @@ export const App: React.FC = () => {
 
       {/* Main Content Area */}
       <main className="flex-1 p-3 sm:p-4 space-y-4">
-        {/* Yellow Warning Banner when Planning Changes Have Not Been Recalculated */}
-        {hasUnrecalculatedChanges && (
+        {/* Non-intrusive Auto-Recalculation Confirmation Pill */}
+        {autoRecalcNotice && (
           <div
-            role="alert"
-            className="bg-amber-100 border-2 border-amber-400 text-amber-950 rounded-2xl p-3.5 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-2.5"
+            role="status"
+            className="bg-emerald-50 border border-emerald-300 text-emerald-900 rounded-xl px-3.5 py-2 shadow-2xs flex items-center gap-2 text-xs font-bold animate-in fade-in duration-150"
           >
-            <div className="flex items-start gap-2.5">
-              <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-              <p className="text-xs font-bold leading-snug">
-                Haz hecho cambios en la planeacion que no estan en la programacion, se recomienda recalcular.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={handleRecalculateSchedule}
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 bg-[#E17726] hover:bg-[#c86419] text-white px-3.5 py-2 rounded-xl text-xs font-bold shadow-xs active:scale-95 transition shrink-0"
-            >
-              <RefreshCw className="w-3.5 h-3.5 shrink-0" />
-              <span>Recalcular ahora</span>
-            </button>
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>{autoRecalcNotice}</span>
           </div>
         )}
 
         {activeTab === 'calendar' && (
           <CalendarPlanView
-            productions={scheduledProductions}
-            workshopConfig={scheduledWorkshopConfig}
+            productions={productions}
+            workshopConfig={workshopConfig}
             selectedProductionId={selectedProductionId}
-            hasUnrecalculatedChanges={hasUnrecalculatedChanges}
             onSelectProductionId={setSelectedProductionId}
             onToggleTaskComplete={handleToggleTaskComplete}
             onSubmitExecutionReport={handleSubmitExecutionReport}
             onRemoveExecutionLog={handleRemoveExecutionLog}
-            onRecalculateSchedule={handleRecalculateSchedule}
           />
         )}
 
         {activeTab === 'productions' && (
           <ProductionView
             productions={productions}
-            scheduledProductions={scheduledProductions}
             operationsCatalog={operations}
-            workshopConfig={scheduledWorkshopConfig}
-            hasUnrecalculatedChanges={hasUnrecalculatedChanges}
+            workshopConfig={workshopConfig}
             onSaveProductions={handleSaveProductions}
-            onRecalculateSchedule={handleRecalculateSchedule}
             onOpenCalendarForProduction={(prodId) => {
               setSelectedProductionId(prodId);
               setActiveTab('calendar');

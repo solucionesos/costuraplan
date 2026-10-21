@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   Plus,
   Trash2,
@@ -15,9 +15,11 @@ import {
   X,
   Check,
   GripVertical,
-  RefreshCw,
   Zap,
   CalendarClock,
+  ArrowUpWideNarrow,
+  ArrowDownWideNarrow,
+  Ruler,
 } from 'lucide-react';
 import {
   ColorBatch,
@@ -25,37 +27,51 @@ import {
   ProductionOperationItem,
   ProductionOrder,
   SewingOperation,
+  SizeBatch,
+  SizeSortOrder,
   WorkshopConfig,
 } from '../domain/types';
-import { COLOR_PALETTE } from '../domain/defaults';
+import { COLOR_PALETTE, SIZE_CATALOG } from '../domain/defaults';
 import {
   addDaysIso,
   buildProductionSchedule,
   evaluateProductionSummary,
   formatDurationHuman,
+  getColorTotalUnits,
+  getOrderedColorSizes,
   reorderProductionOperations,
 } from '../domain/scheduler';
 import { getTodayIso } from '../storage';
 
 interface ProductionViewProps {
   productions: ProductionOrder[];
-  scheduledProductions: ProductionOrder[];
   operationsCatalog: SewingOperation[];
   workshopConfig: WorkshopConfig;
-  hasUnrecalculatedChanges: boolean;
   onSaveProductions: (orders: ProductionOrder[]) => void;
-  onRecalculateSchedule: () => void;
   onOpenCalendarForProduction: (productionId: string) => void;
 }
 
+const QUICK_SIZES = [
+  'Única',
+  'XS',
+  'S',
+  'M',
+  'L',
+  'XL',
+  'XXL',
+  '6',
+  '8',
+  '10',
+  '12',
+  '14',
+  '16',
+];
+
 export const ProductionView: React.FC<ProductionViewProps> = ({
   productions,
-  scheduledProductions,
   operationsCatalog,
   workshopConfig,
-  hasUnrecalculatedChanges,
   onSaveProductions,
-  onRecalculateSchedule,
   onOpenCalendarForProduction,
 }) => {
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -67,6 +83,7 @@ export const ProductionView: React.FC<ProductionViewProps> = ({
   const [receivedDate, setReceivedDate] = useState(getTodayIso());
   const [deliveryDate, setDeliveryDate] = useState(addDaysIso(getTodayIso(), 5));
   const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>('asap');
+  const [sizeSortOrder, setSizeSortOrder] = useState<SizeSortOrder>('asc');
   const [colors, setColors] = useState<ColorBatch[]>([]);
   const [selectedOps, setSelectedOps] = useState<ProductionOperationItem[]>([]);
 
@@ -88,15 +105,34 @@ export const ProductionView: React.FC<ProductionViewProps> = ({
     null
   );
 
-  // Color sub-form
+  // Color + Size sub-form inside modal
   const [newColorName, setNewColorName] = useState('Blanco');
   const [newColorHex, setNewColorHex] = useState('#F8FAFC');
+  const [newColorSize, setNewColorSize] = useState('Única');
   const [newColorUnits, setNewColorUnits] = useState('50');
+
+  // Inline per-color size adder state (colorId -> { size, units })
+  const [inlineSizeDrafts, setInlineSizeDrafts] = useState<
+    Record<string, { size: string; units: string }>
+  >({});
 
   // Operation selector sub-form
   const [selectedCatalogOpId, setSelectedCatalogOpId] = useState(
     operationsCatalog[0]?.id ?? ''
   );
+
+  const normalizeColorWithSizes = (c: ColorBatch): ColorBatch => {
+    const rawSizes: SizeBatch[] =
+      c.sizes && c.sizes.length > 0
+        ? c.sizes.map((s) => ({ size: s.size, units: Math.max(1, s.units) }))
+        : [{ size: 'Única', units: Math.max(1, c.units) }];
+    const totalUnits = rawSizes.reduce((acc, s) => acc + s.units, 0);
+    return {
+      ...c,
+      units: totalUnits,
+      sizes: rawSizes,
+    };
+  };
 
   const openNewOrderForm = () => {
     const today = getTodayIso();
@@ -106,9 +142,26 @@ export const ProductionView: React.FC<ProductionViewProps> = ({
     setReceivedDate(today);
     setDeliveryDate(addDaysIso(today, 5));
     setDeliveryMode('asap');
+    setSizeSortOrder('asc');
     setColors([
-      { id: `col-${Date.now()}-1`, colorName: 'Blanco', colorHex: '#F8FAFC', units: 60 },
-      { id: `col-${Date.now()}-2`, colorName: 'Negro', colorHex: '#1E293B', units: 60 },
+      {
+        id: `col-${Date.now()}-1`,
+        colorName: 'Blanco',
+        colorHex: '#F8FAFC',
+        units: 60,
+        sizes: [
+          { size: 'S', units: 20 },
+          { size: 'M', units: 20 },
+          { size: 'L', units: 20 },
+        ],
+      },
+      {
+        id: `col-${Date.now()}-2`,
+        colorName: 'Negro',
+        colorHex: '#1E293B',
+        units: 60,
+        sizes: [{ size: 'Única', units: 60 }],
+      },
     ]);
     setSelectedOps(
       operationsCatalog.slice(0, 4).map((op) => ({
@@ -119,6 +172,7 @@ export const ProductionView: React.FC<ProductionViewProps> = ({
       }))
     );
     setSelectedCatalogOpId(operationsCatalog[0]?.id ?? '');
+    setInlineSizeDrafts({});
     setIsFormOpen(true);
   };
 
@@ -129,25 +183,122 @@ export const ProductionView: React.FC<ProductionViewProps> = ({
     setReceivedDate(order.receivedDate);
     setDeliveryDate(order.deliveryDate);
     setDeliveryMode(order.deliveryMode ?? 'asap');
-    setColors([...order.colors]);
+    setSizeSortOrder(order.sizeSortOrder ?? 'asc');
+    setColors(order.colors.map(normalizeColorWithSizes));
     setSelectedOps([...order.operations]);
     setSelectedCatalogOpId(operationsCatalog[0]?.id ?? '');
+    setInlineSizeDrafts({});
     setIsFormOpen(true);
   };
 
-  const handleAddColor = () => {
+  // Add a color (or if a color with the same name already exists in the draft, add/sum the size inside that color!)
+  const handleAddColorOrSize = () => {
     const unitsNum = parseInt(newColorUnits, 10);
-    if (!newColorName.trim() || isNaN(unitsNum) || unitsNum <= 0) return;
-    setColors([
-      ...colors,
-      {
-        id: `col-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        colorName: newColorName.trim(),
+    const trimmedColor = newColorName.trim();
+    const trimmedSize = newColorSize.trim() || 'Única';
+    if (!trimmedColor || isNaN(unitsNum) || unitsNum <= 0) return;
+
+    const existingColorIdx = colors.findIndex(
+      (c) => c.colorName.toLowerCase() === trimmedColor.toLowerCase()
+    );
+
+    if (existingColorIdx >= 0) {
+      const targetColor = normalizeColorWithSizes(colors[existingColorIdx]);
+      const currentSizes = [...(targetColor.sizes ?? [])];
+      const existingSizeIdx = currentSizes.findIndex(
+        (s) => s.size.toUpperCase() === trimmedSize.toUpperCase()
+      );
+      if (existingSizeIdx >= 0) {
+        currentSizes[existingSizeIdx] = {
+          ...currentSizes[existingSizeIdx],
+          units: currentSizes[existingSizeIdx].units + unitsNum,
+        };
+      } else {
+        currentSizes.push({ size: trimmedSize, units: unitsNum });
+      }
+      const nextTotal = currentSizes.reduce((acc, s) => acc + s.units, 0);
+      const nextColors = [...colors];
+      nextColors[existingColorIdx] = {
+        ...targetColor,
         colorHex: newColorHex,
-        units: unitsNum,
-      },
-    ]);
-    setNewColorUnits('50');
+        units: nextTotal,
+        sizes: currentSizes,
+      };
+      setColors(nextColors);
+    } else {
+      setColors([
+        ...colors,
+        {
+          id: `col-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          colorName: trimmedColor,
+          colorHex: newColorHex,
+          units: unitsNum,
+          sizes: [{ size: trimmedSize, units: unitsNum }],
+        },
+      ]);
+    }
+    setNewColorUnits('30');
+  };
+
+  const handleAddSizeToExistingColor = (colorId: string) => {
+    const draft = inlineSizeDrafts[colorId] ?? { size: 'M', units: '20' };
+    const sizeStr = draft.size.trim() || 'Única';
+    const unitsNum = parseInt(draft.units, 10);
+    if (isNaN(unitsNum) || unitsNum <= 0) return;
+
+    setColors(
+      colors.map((c) => {
+        if (c.id !== colorId) return c;
+        const norm = normalizeColorWithSizes(c);
+        const list = [...(norm.sizes ?? [])];
+        const existingIdx = list.findIndex(
+          (s) => s.size.toUpperCase() === sizeStr.toUpperCase()
+        );
+        if (existingIdx >= 0) {
+          list[existingIdx] = {
+            ...list[existingIdx],
+            units: list[existingIdx].units + unitsNum,
+          };
+        } else {
+          list.push({ size: sizeStr, units: unitsNum });
+        }
+        const total = list.reduce((acc, s) => acc + s.units, 0);
+        return { ...norm, units: total, sizes: list };
+      })
+    );
+  };
+
+  const handleUpdateSizeUnits = (
+    colorId: string,
+    sizeName: string,
+    nextUnits: number
+  ) => {
+    const safeUnits = Math.max(1, nextUnits || 1);
+    setColors(
+      colors.map((c) => {
+        if (c.id !== colorId) return c;
+        const norm = normalizeColorWithSizes(c);
+        const list = (norm.sizes ?? []).map((s) =>
+          s.size === sizeName ? { ...s, units: safeUnits } : s
+        );
+        const total = list.reduce((acc, s) => acc + s.units, 0);
+        return { ...norm, units: total, sizes: list };
+      })
+    );
+  };
+
+  const handleRemoveSizeFromColor = (colorId: string, sizeName: string) => {
+    setColors(
+      colors
+        .map((c) => {
+          if (c.id !== colorId) return c;
+          const norm = normalizeColorWithSizes(c);
+          const list = (norm.sizes ?? []).filter((s) => s.size !== sizeName);
+          const total = list.reduce((acc, s) => acc + s.units, 0);
+          return { ...norm, units: total, sizes: list };
+        })
+        .filter((c) => (c.sizes?.length ?? 0) > 0 && c.units > 0)
+    );
   };
 
   const moveColor = (index: number, direction: -1 | 1) => {
@@ -176,7 +327,7 @@ export const ProductionView: React.FC<ProductionViewProps> = ({
     setSelectedOps(copy);
   };
 
-  // Reorder operations directly on the card WITHOUT asking modal (triggers yellow warning banner)
+  // Reorder operations directly on the card -> automatically recalculates schedule
   const handleReorderCardOperation = (
     order: ProductionOrder,
     fromIndex: number,
@@ -198,7 +349,7 @@ export const ProductionView: React.FC<ProductionViewProps> = ({
     onSaveProductions(nextOrders);
   };
 
-  // Change delivery mode directly on the card WITHOUT asking modal (triggers yellow warning banner)
+  // Change delivery mode directly on the card -> automatically recalculates schedule
   const handleChangeCardDeliveryMode = (
     order: ProductionOrder,
     nextMode: DeliveryMode
@@ -211,6 +362,19 @@ export const ProductionView: React.FC<ProductionViewProps> = ({
     onSaveProductions(nextOrders);
   };
 
+  // Change size sort order ('asc' | 'desc') directly on the card -> automatically recalculates schedule
+  const handleChangeCardSizeSortOrder = (
+    order: ProductionOrder,
+    nextSortOrder: SizeSortOrder
+  ) => {
+    const currentSort = order.sizeSortOrder ?? 'asc';
+    if (currentSort === nextSortOrder) return;
+    const nextOrders = productions.map((p) =>
+      p.id === order.id ? { ...p, sizeSortOrder: nextSortOrder } : p
+    );
+    onSaveProductions(nextOrders);
+  };
+
   const handleAddOperationFromCatalog = () => {
     const found = operationsCatalog.find((o) => o.id === selectedCatalogOpId);
     if (!found) return;
@@ -219,12 +383,14 @@ export const ProductionView: React.FC<ProductionViewProps> = ({
       ...selectedOps,
       {
         operationId: found.id,
-        operationName: found.name,
+        operationName: opNameFromCatalog(found),
         machine: found.machine,
         minutesPerUnit: found.standardMinutes,
       },
     ]);
   };
+
+  const opNameFromCatalog = (op: SewingOperation) => op.name;
 
   const handleAddAllCatalogOps = () => {
     setSelectedOps(
@@ -243,6 +409,15 @@ export const ProductionView: React.FC<ProductionViewProps> = ({
       return;
     }
     const safeDelivery = deliveryDate < receivedDate ? receivedDate : deliveryDate;
+    const normalizedColors = colors.map((c) => {
+      const ordered = getOrderedColorSizes(c, sizeSortOrder);
+      const total = ordered.reduce((acc, s) => acc + s.units, 0);
+      return {
+        ...c,
+        units: total,
+        sizes: ordered,
+      };
+    });
 
     if (editingOrder) {
       const updated = productions.map((p) =>
@@ -254,7 +429,8 @@ export const ProductionView: React.FC<ProductionViewProps> = ({
               receivedDate,
               deliveryDate: safeDelivery,
               deliveryMode,
-              colors,
+              sizeSortOrder,
+              colors: normalizedColors,
               operations: selectedOps,
             }
           : p
@@ -268,9 +444,11 @@ export const ProductionView: React.FC<ProductionViewProps> = ({
         receivedDate,
         deliveryDate: safeDelivery,
         deliveryMode,
-        colors,
+        sizeSortOrder,
+        colors: normalizedColors,
         operations: selectedOps,
         completedTaskKeys: [],
+        executionLogs: [],
         createdAt: getTodayIso(),
       };
       onSaveProductions([newOrder, ...productions]);
@@ -282,24 +460,23 @@ export const ProductionView: React.FC<ProductionViewProps> = ({
     onSaveProductions(productions.filter((p) => p.id !== id));
   };
 
-  const scheduleResult = buildProductionSchedule(
-    scheduledProductions,
-    workshopConfig,
-    {
-      mode: 'standard',
-    }
+  // Automatic real-time schedule computed from live productions & workshopConfig
+  const schedule = useMemo(
+    () => buildProductionSchedule(productions, workshopConfig, { mode: 'standard' }),
+    [productions, workshopConfig]
   );
 
-  // Live preview inside modal
+  // Preview summary for the modal draft
   const draftSummary = isFormOpen
     ? evaluateProductionSummary(
         {
           id: 'draft',
-          garmentName: garmentName || 'Prenda',
+          garmentName: garmentName || 'Borrador',
           referenceCode,
           receivedDate,
           deliveryDate: deliveryDate < receivedDate ? receivedDate : deliveryDate,
           deliveryMode,
+          sizeSortOrder,
           colors,
           operations: selectedOps,
           completedTaskKeys: [],
@@ -310,90 +487,68 @@ export const ProductionView: React.FC<ProductionViewProps> = ({
     : null;
 
   return (
-    <div className="space-y-4 pb-24 w-full max-w-full overflow-x-hidden">
-      {/* Header Banner (#51344D + #E17726) - Mobile Responsive Stack */}
-      <div className="bg-gradient-to-r from-[#51344D] to-[#3B2538] border-b-4 border-[#E17726] rounded-2xl p-4 text-white shadow-md space-y-3">
-        <div>
-          <h2 className="text-lg font-bold leading-snug">
+    <div className="space-y-4 pb-24">
+      {/* Header Banner (#51344D Soluciones Open Source + #E17726) */}
+      <div className="bg-gradient-to-r from-[#51344D] to-[#3B2538] border-b-4 border-[#E17726] rounded-2xl p-3.5 sm:p-4 text-white shadow-md flex flex-wrap items-center justify-between gap-2.5">
+        <div className="min-w-0">
+          <h2 className="text-base sm:text-lg font-bold">
             Registro de Producciones
           </h2>
-          <p className="text-xs text-stone-200 mt-0.5 leading-relaxed">
-            Arrastra las operaciones para cambiar su prioridad y configura el modo de entrega.
+          <p className="text-xs text-stone-200 mt-0.5 leading-snug">
+            Configura prenda, colores, tallas (Ascendente/Descendente), prioridad de operaciones y modo de entrega con recálculo automático.
           </p>
         </div>
 
-        <div className="grid grid-cols-2 gap-2.5 pt-1">
-          <button
-            type="button"
-            onClick={onRecalculateSchedule}
-            className={`flex items-center justify-center gap-1.5 font-bold px-3 py-2.5 rounded-xl text-xs border active:scale-95 transition ${
-              hasUnrecalculatedChanges
-                ? 'bg-amber-400 text-[#2e1f14] border-amber-300 shadow-sm animate-pulse'
-                : 'bg-white/15 hover:bg-white/25 text-white border-white/20'
-            }`}
-          >
-            <RefreshCw className="w-4 h-4 shrink-0" />
-            <span>Recalcular</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={openNewOrderForm}
-            className="flex items-center justify-center gap-1.5 bg-[#E17726] hover:bg-[#c86419] text-white font-bold px-3 py-2.5 rounded-xl text-xs shadow-sm active:scale-95 transition"
-          >
-            <Plus className="w-4 h-4 shrink-0" />
-            <span>Nueva Orden</span>
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={openNewOrderForm}
+          className="w-full sm:w-auto flex items-center justify-center gap-1.5 bg-[#E17726] hover:bg-[#c86419] text-white font-bold px-3.5 py-2 rounded-xl text-xs shadow-sm active:scale-95 transition shrink-0"
+        >
+          <Plus className="w-4 h-4 shrink-0" />
+          <span>+ Nueva Orden</span>
+        </button>
       </div>
 
-      {/* Productions List */}
-      <div className="space-y-4">
+      {/* Production Orders List */}
+      <div className="space-y-3.5">
         {productions.map((order) => {
           const summary =
-            scheduleResult.summaries[order.id] ??
+            schedule.summaries[order.id] ??
             evaluateProductionSummary(order, workshopConfig);
-          const currentDeliveryMode: DeliveryMode =
-            order.deliveryMode ?? 'asap';
+          const currentDeliveryMode = order.deliveryMode ?? 'asap';
+          const currentSizeSortOrder = order.sizeSortOrder ?? 'asc';
 
           return (
             <div
               key={order.id}
-              className="bg-white rounded-2xl p-3.5 sm:p-4 border border-stone-200 shadow-xs space-y-3.5 w-full overflow-hidden"
+              className="bg-white rounded-2xl p-3.5 sm:p-4 border border-stone-200 shadow-xs space-y-3"
             >
-              {/* Top title & actions */}
+              {/* Top Row: Garment Title & Actions */}
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="px-2 py-0.5 bg-[#FDF2E9] text-[#E17726] border border-[#E17726]/30 rounded-md text-[11px] font-bold">
+                    <span className="px-2 py-0.5 rounded-md bg-[#F4EEF3] text-[#51344D] font-bold text-[11px]">
                       {order.referenceCode}
                     </span>
-                    <span className="text-xs text-stone-500 flex items-center gap-1">
-                      <Calendar className="w-3.5 h-3.5 text-[#51344D] shrink-0" />
-                      <span>
-                        {order.receivedDate} → <strong>{order.deliveryDate}</strong>
-                      </span>
+                    <span className="text-[11px] text-stone-500 flex items-center gap-1">
+                      <Calendar className="w-3 h-3 shrink-0" />
+                      {order.receivedDate} →{' '}
+                      <strong className="text-[#2e1f14]">
+                        {order.deliveryDate}
+                      </strong>
                     </span>
                   </div>
-                  <h3 className="font-bold text-base text-[#2e1f14] mt-1.5 flex items-start gap-1.5 break-words">
-                    <Shirt className="w-4 h-4 text-[#E17726] shrink-0 mt-0.5" />
+                  <h3 className="font-bold text-[#2e1f14] text-base mt-1 flex items-start gap-1.5 break-words">
+                    <Shirt className="w-4 h-4 text-[#E17726] shrink-0 mt-1" />
                     <span className="break-words">{order.garmentName}</span>
                   </h3>
                 </div>
 
-                <div className="flex items-center gap-0.5 shrink-0">
-                  <button
-                    type="button"
-                    onClick={onRecalculateSchedule}
-                    className="p-2 text-[#51344D] hover:bg-[#F4EEF3] rounded-lg transition"
-                    title="Recalcular programación"
-                  >
-                    <RefreshCw className="w-4 h-4" />
-                  </button>
+                <div className="flex items-center gap-1 shrink-0">
                   <button
                     type="button"
                     onClick={() => openEditOrderForm(order)}
-                    className="p-2 text-stone-500 hover:text-[#E17726] hover:bg-[#FDF2E9] rounded-lg transition"
+                    className="p-2 text-stone-500 hover:text-[#E17726] hover:bg-[#FDF2E9] rounded-xl transition"
                     title="Editar producción"
                   >
                     <Pencil className="w-4 h-4" />
@@ -401,7 +556,7 @@ export const ProductionView: React.FC<ProductionViewProps> = ({
                   <button
                     type="button"
                     onClick={() => handleDeleteOrder(order.id)}
-                    className="p-2 text-stone-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
+                    className="p-2 text-stone-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition"
                     title="Eliminar producción"
                   >
                     <Trash2 className="w-4 h-4" />
@@ -409,46 +564,90 @@ export const ProductionView: React.FC<ProductionViewProps> = ({
                 </div>
               </div>
 
-              {/* Delivery Mode Selector on Card */}
-              <div className="bg-[#f5f2f0] p-2.5 rounded-xl border border-stone-200 space-y-2">
-                <div className="flex flex-wrap items-center justify-between gap-1 text-[11px]">
-                  <span className="font-bold text-[#51344D]">
-                    Modo de Programación de Entrega:
-                  </span>
-                  <span className="text-stone-600">
-                    Sale aprox:{' '}
-                    <strong>
-                      {summary.estimatedCompletionDate ?? order.deliveryDate}
-                    </strong>
-                  </span>
+              {/* Delivery Mode & Size Sort Order Selectors on Card */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                {/* Delivery Mode */}
+                <div className="bg-[#f5f2f0] p-2.5 rounded-xl border border-stone-200 space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-1 text-[11px]">
+                    <span className="font-bold text-[#51344D]">
+                      Modo de Entrega:
+                    </span>
+                    <span className="text-stone-600">
+                      Sale:{' '}
+                      <strong>
+                        {summary.estimatedCompletionDate ?? order.deliveryDate}
+                      </strong>
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => handleChangeCardDeliveryMode(order, 'asap')}
+                      className={`flex items-center justify-center gap-1 py-1.5 px-2 rounded-lg text-[11px] font-bold border transition ${
+                        currentDeliveryMode === 'asap'
+                          ? 'bg-[#E17726] text-white border-[#E17726] shadow-2xs'
+                          : 'bg-white text-stone-700 border-stone-200 hover:border-[#E17726]'
+                      }`}
+                    >
+                      <Zap className="w-3 h-3 shrink-0" />
+                      <span>Apenas esté lista</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleChangeCardDeliveryMode(order, 'by-deadline')
+                      }
+                      className={`flex items-center justify-center gap-1 py-1.5 px-2 rounded-lg text-[11px] font-bold border transition ${
+                        currentDeliveryMode === 'by-deadline'
+                          ? 'bg-[#51344D] text-white border-[#51344D] shadow-2xs'
+                          : 'bg-white text-stone-700 border-stone-200 hover:border-[#51344D]'
+                      }`}
+                    >
+                      <CalendarClock className="w-3 h-3 shrink-0" />
+                      <span>Fecha de Entrega</span>
+                    </button>
+                  </div>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => handleChangeCardDeliveryMode(order, 'asap')}
-                    className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-xs font-bold border transition ${
-                      currentDeliveryMode === 'asap'
-                        ? 'bg-[#E17726] text-white border-[#E17726] shadow-xs'
-                        : 'bg-white text-stone-700 border-stone-200 hover:border-[#E17726]'
-                    }`}
-                  >
-                    <Zap className="w-3.5 h-3.5 shrink-0" />
-                    <span>Apenas esté lista (100% día)</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      handleChangeCardDeliveryMode(order, 'by-deadline')
-                    }
-                    className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-xs font-bold border transition ${
-                      currentDeliveryMode === 'by-deadline'
-                        ? 'bg-[#51344D] text-white border-[#51344D] shadow-xs'
-                        : 'bg-white text-stone-700 border-stone-200 hover:border-[#51344D]'
-                    }`}
-                  >
-                    <CalendarClock className="w-3.5 h-3.5 shrink-0" />
-                    <span>Fecha de Entrega (Todo el plazo)</span>
-                  </button>
+
+                {/* Size Sort Order (Ascendente / Descendente) */}
+                <div className="bg-[#f5f2f0] p-2.5 rounded-xl border border-stone-200 space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-1 text-[11px]">
+                    <span className="font-bold text-[#51344D] flex items-center gap-1">
+                      <Ruler className="w-3.5 h-3.5 text-[#E17726]" />
+                      <span>Orden de Tallaje:</span>
+                    </span>
+                    <span className="text-stone-500 text-[10px]">
+                      Dentro de cada color
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => handleChangeCardSizeSortOrder(order, 'asc')}
+                      className={`flex items-center justify-center gap-1 py-1.5 px-2 rounded-lg text-[11px] font-bold border transition ${
+                        currentSizeSortOrder === 'asc'
+                          ? 'bg-[#E17726] text-white border-[#E17726] shadow-2xs'
+                          : 'bg-white text-stone-700 border-stone-200 hover:border-[#E17726]'
+                      }`}
+                    >
+                      <ArrowUpWideNarrow className="w-3.5 h-3.5 shrink-0" />
+                      <span>Ascendente</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleChangeCardSizeSortOrder(order, 'desc')
+                      }
+                      className={`flex items-center justify-center gap-1 py-1.5 px-2 rounded-lg text-[11px] font-bold border transition ${
+                        currentSizeSortOrder === 'desc'
+                          ? 'bg-[#51344D] text-white border-[#51344D] shadow-2xs'
+                          : 'bg-white text-stone-700 border-stone-200 hover:border-[#51344D]'
+                      }`}
+                    >
+                      <ArrowDownWideNarrow className="w-3.5 h-3.5 shrink-0" />
+                      <span>Descendente</span>
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -480,43 +679,77 @@ export const ProductionView: React.FC<ProductionViewProps> = ({
                 </div>
               </div>
 
-              {/* Color Evacuation Order */}
-              <div>
-                <div className="flex items-center justify-between text-xs text-stone-500 mb-1.5">
+              {/* Color Evacuation Order + Ordered Sizes per Color */}
+              <div className="space-y-1.5">
+                <div className="flex flex-wrap items-center justify-between gap-1 text-xs text-stone-500">
                   <span className="font-semibold flex items-center gap-1 text-[#2e1f14]">
                     <Palette className="w-3.5 h-3.5 text-[#E17726] shrink-0" />
                     <span>
-                      Orden de Evacuación por Color ({order.colors.length} colores):
+                      Evacuación por Color y Talla ({order.colors.length}{' '}
+                      {order.colors.length === 1 ? 'color' : 'colores'} • Tallaje{' '}
+                      {currentSizeSortOrder === 'asc'
+                        ? 'Ascendente ↑'
+                        : 'Descendente ↓'}
+                      ):
                     </span>
                   </span>
                 </div>
-                <div className="flex flex-wrap gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   {order.colors.map((col, idx) => {
+                    const colTotalUnits = getColorTotalUnits(col);
+                    const orderedSizes = getOrderedColorSizes(
+                      col,
+                      currentSizeSortOrder
+                    );
                     const colorMinutes = Math.round(
-                      col.units * summary.minutesPerUnit
+                      colTotalUnits * summary.minutesPerUnit
                     );
                     const finishDate = summary.colorCompletionDates[col.id];
                     return (
                       <div
                         key={col.id}
-                        className="flex items-center gap-2 bg-[#f5f2f0] border border-stone-200 px-2.5 py-1.5 rounded-xl text-xs"
+                        className="bg-[#f5f2f0] border border-stone-200 p-2.5 rounded-xl text-xs space-y-1.5"
                       >
-                        <span className="text-[10px] font-bold text-stone-400">
-                          #{idx + 1}
-                        </span>
-                        <span
-                          className="w-3.5 h-3.5 rounded-full border border-stone-300 shrink-0"
-                          style={{ backgroundColor: col.colorHex }}
-                        />
-                        <div>
-                          <span className="font-bold text-[#2e1f14]">
-                            {col.colorName}
-                          </span>{' '}
-                          <span className="text-stone-600">({col.units} uds)</span>
-                          <span className="block text-[10px] text-stone-500">
-                            {formatDurationHuman(colorMinutes)}
-                            {finishDate ? ` • Sale: ${finishDate}` : ''}
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className="text-[10px] font-bold text-stone-400">
+                              #{idx + 1}
+                            </span>
+                            <span
+                              className="w-3.5 h-3.5 rounded-full border border-stone-300 shrink-0"
+                              style={{ backgroundColor: col.colorHex }}
+                            />
+                            <span className="font-bold text-[#2e1f14] truncate">
+                              {col.colorName}
+                            </span>
+                          </div>
+                          <span className="text-[11px] font-extrabold text-[#51344D] shrink-0">
+                            {colTotalUnits} uds
                           </span>
+                        </div>
+
+                        {/* Ordered Sizes Pills inside Color */}
+                        <div className="flex flex-wrap gap-1">
+                          {orderedSizes.map((s) => (
+                            <span
+                              key={s.size}
+                              className="inline-flex items-center gap-1 bg-white border border-stone-200 px-2 py-0.5 rounded-md text-[10px] font-semibold text-[#2e1f14]"
+                            >
+                              <span className="text-[#E17726] font-bold">
+                                Talla {s.size}:
+                              </span>
+                              <span>{s.units} uds</span>
+                            </span>
+                          ))}
+                        </div>
+
+                        <div className="text-[10px] text-stone-500 flex items-center justify-between pt-1 border-t border-stone-200/70">
+                          <span>Tiempo: {formatDurationHuman(colorMinutes)}</span>
+                          {finishDate && (
+                            <span className="font-bold text-emerald-700">
+                              Sale: {finishDate}
+                            </span>
+                          )}
                         </div>
                       </div>
                     );
@@ -679,24 +912,14 @@ export const ProductionView: React.FC<ProductionViewProps> = ({
                   </div>
                 )}
 
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={onRecalculateSchedule}
-                    className="flex items-center justify-center gap-1.5 bg-[#51344D] hover:bg-[#3B2538] text-white font-bold text-xs py-2.5 px-3 rounded-xl shadow-xs active:scale-95 transition"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5 shrink-0" />
-                    <span>Recalcular</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onOpenCalendarForProduction(order.id)}
-                    className="flex items-center justify-center gap-1 bg-[#E17726] hover:bg-[#c86419] text-white font-bold text-xs py-2.5 px-3 rounded-xl shadow-xs active:scale-95 transition"
-                  >
-                    <span>Ver Calendario</span>
-                    <ChevronRight className="w-4 h-4 shrink-0" />
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => onOpenCalendarForProduction(order.id)}
+                  className="w-full flex items-center justify-center gap-1.5 bg-[#E17726] hover:bg-[#c86419] text-white font-bold text-xs py-2.5 px-3 rounded-xl shadow-xs active:scale-95 transition"
+                >
+                  <span>Ver Calendario Día a Día</span>
+                  <ChevronRight className="w-4 h-4 shrink-0" />
+                </button>
               </div>
             </div>
           );
@@ -718,7 +941,7 @@ export const ProductionView: React.FC<ProductionViewProps> = ({
         )}
       </div>
 
-      {/* Modal Crear / Editar Producción (Mobile-First Fixed Header/Footer + No Horizontal Overflow) */}
+      {/* Modal Crear / Editar Producción */}
       {isFormOpen && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4">
           <div className="bg-white w-full max-w-2xl max-h-[92vh] rounded-t-3xl sm:rounded-2xl shadow-xl flex flex-col overflow-hidden">
@@ -799,78 +1022,139 @@ export const ProductionView: React.FC<ProductionViewProps> = ({
                 </div>
               </div>
 
-              {/* Configuración de Modo de Entrega (2 Opciones) */}
-              <div className="bg-[#f5f2f0] p-3 rounded-2xl border border-stone-200 space-y-2.5">
-                <label className="block text-xs font-bold text-[#2e1f14]">
-                  Opción de Entrega y Distribución del Tiempo *
-                </label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setDeliveryMode('asap')}
-                    className={`text-left p-3 rounded-xl border-2 transition flex flex-col justify-between ${
-                      deliveryMode === 'asap'
-                        ? 'bg-[#FDF2E9] border-[#E17726] shadow-xs'
-                        : 'bg-white border-stone-200 hover:border-stone-300'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2 font-bold text-xs text-[#2e1f14]">
-                      <Zap
-                        className={`w-4 h-4 shrink-0 ${
-                          deliveryMode === 'asap'
-                            ? 'text-[#E17726]'
-                            : 'text-stone-400'
-                        }`}
-                      />
-                      <span>Apenas esté lista</span>
-                    </div>
-                    <p className="text-[11px] text-stone-600 mt-1 leading-snug">
-                      Utiliza el <strong>100% del tiempo disponible</strong> en cada día para entregar lo más pronto posible.
-                    </p>
-                  </button>
+              {/* Configuración de Modo de Entrega y Orden de Tallaje */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* Modo de Entrega */}
+                <div className="bg-[#f5f2f0] p-3 rounded-2xl border border-stone-200 space-y-2">
+                  <label className="block text-xs font-bold text-[#2e1f14]">
+                    Opción de Entrega *
+                  </label>
+                  <div className="grid grid-cols-1 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setDeliveryMode('asap')}
+                      className={`text-left p-2.5 rounded-xl border-2 transition ${
+                        deliveryMode === 'asap'
+                          ? 'bg-[#FDF2E9] border-[#E17726] shadow-2xs'
+                          : 'bg-white border-stone-200 hover:border-stone-300'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5 font-bold text-xs text-[#2e1f14]">
+                        <Zap
+                          className={`w-4 h-4 shrink-0 ${
+                            deliveryMode === 'asap'
+                              ? 'text-[#E17726]'
+                              : 'text-stone-400'
+                          }`}
+                        />
+                        <span>Apenas esté lista (100% día)</span>
+                      </div>
+                      <p className="text-[10px] text-stone-600 mt-0.5 leading-snug">
+                        Usa el 100% del horario diario para terminar lo antes posible.
+                      </p>
+                    </button>
 
-                  <button
-                    type="button"
-                    onClick={() => setDeliveryMode('by-deadline')}
-                    className={`text-left p-3 rounded-xl border-2 transition flex flex-col justify-between ${
-                      deliveryMode === 'by-deadline'
-                        ? 'bg-[#F4EEF3] border-[#51344D] shadow-xs'
-                        : 'bg-white border-stone-200 hover:border-stone-300'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2 font-bold text-xs text-[#2e1f14]">
-                      <CalendarClock
-                        className={`w-4 h-4 shrink-0 ${
-                          deliveryMode === 'by-deadline'
-                            ? 'text-[#51344D]'
-                            : 'text-stone-400'
-                        }`}
-                      />
-                      <span>Fecha de Entrega</span>
-                    </div>
-                    <p className="text-[11px] text-stone-600 mt-1 leading-snug">
-                      Programa para hacer operaciones <strong>todos los días del plazo</strong> así se trabaje menos horas del horario configurado.
-                    </p>
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => setDeliveryMode('by-deadline')}
+                      className={`text-left p-2.5 rounded-xl border-2 transition ${
+                        deliveryMode === 'by-deadline'
+                          ? 'bg-[#F4EEF3] border-[#51344D] shadow-2xs'
+                          : 'bg-white border-stone-200 hover:border-stone-300'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5 font-bold text-xs text-[#2e1f14]">
+                        <CalendarClock
+                          className={`w-4 h-4 shrink-0 ${
+                            deliveryMode === 'by-deadline'
+                              ? 'text-[#51344D]'
+                              : 'text-stone-400'
+                          }`}
+                        />
+                        <span>Fecha de Entrega (Todo el plazo)</span>
+                      </div>
+                      <p className="text-[10px] text-stone-600 mt-0.5 leading-snug">
+                        Reparte operaciones todos los días del plazo de entrega.
+                      </p>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Parámetro Orden de Tallaje (Ascendente / Descendente) */}
+                <div className="bg-[#f5f2f0] p-3 rounded-2xl border border-stone-200 space-y-2">
+                  <label className="block text-xs font-bold text-[#2e1f14] flex items-center gap-1.5">
+                    <Ruler className="w-4 h-4 text-[#E17726] shrink-0" />
+                    <span>Orden de Tallaje (por Color) *</span>
+                  </label>
+                  <div className="grid grid-cols-1 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setSizeSortOrder('asc')}
+                      className={`text-left p-2.5 rounded-xl border-2 transition ${
+                        sizeSortOrder === 'asc'
+                          ? 'bg-[#FDF2E9] border-[#E17726] shadow-2xs'
+                          : 'bg-white border-stone-200 hover:border-stone-300'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5 font-bold text-xs text-[#2e1f14]">
+                        <ArrowUpWideNarrow
+                          className={`w-4 h-4 shrink-0 ${
+                            sizeSortOrder === 'asc'
+                              ? 'text-[#E17726]'
+                              : 'text-stone-400'
+                          }`}
+                        />
+                        <span>Ascendente (Menor a Mayor)</span>
+                      </div>
+                      <p className="text-[10px] text-stone-600 mt-0.5 leading-snug">
+                        Ej. Única, 6 → 8 → 10, XS → S → M → L → XL
+                      </p>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setSizeSortOrder('desc')}
+                      className={`text-left p-2.5 rounded-xl border-2 transition ${
+                        sizeSortOrder === 'desc'
+                          ? 'bg-[#F4EEF3] border-[#51344D] shadow-2xs'
+                          : 'bg-white border-stone-200 hover:border-stone-300'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5 font-bold text-xs text-[#2e1f14]">
+                        <ArrowDownWideNarrow
+                          className={`w-4 h-4 shrink-0 ${
+                            sizeSortOrder === 'desc'
+                              ? 'text-[#51344D]'
+                              : 'text-stone-400'
+                          }`}
+                        />
+                        <span>Descendente (Mayor a Menor)</span>
+                      </div>
+                      <p className="text-[10px] text-stone-600 mt-0.5 leading-snug">
+                        Ej. XL → L → M → S → XS, 10 → 8 → 6, Única
+                      </p>
+                    </button>
+                  </div>
                 </div>
               </div>
 
-              {/* Sección Colores y Unidades (Responsive, zero overflow on Redmi Note 9) */}
+              {/* Sección Colores, Tallas y Unidades */}
               <div className="bg-[#f5f2f0] p-3 rounded-2xl border border-stone-200 space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-1">
                   <label className="text-xs font-bold text-[#2e1f14] flex items-center gap-1.5">
                     <Palette className="w-4 h-4 text-[#E17726] shrink-0" />
-                    <span>Colores y Unidades</span>
+                    <span>Colores, Tallas (incluye Única) y Unidades</span>
                   </label>
                   <span className="text-[11px] text-stone-600">
-                    Total:{' '}
+                    Total lote:{' '}
                     <strong>
-                      {colors.reduce((s, c) => s + c.units, 0)} unidades
+                      {colors.reduce((s, c) => s + getColorTotalUnits(c), 0)}{' '}
+                      unidades
                     </strong>
                   </span>
                 </div>
 
-                {/* Paleta rápida */}
+                {/* Paleta rápida de Colores */}
                 <div className="flex flex-wrap gap-1.5">
                   {COLOR_PALETTE.map((preset) => (
                     <button
@@ -895,7 +1179,30 @@ export const ProductionView: React.FC<ProductionViewProps> = ({
                   ))}
                 </div>
 
-                {/* Agregar Color (2 filas limpias en móvil para evitar desborde) */}
+                {/* Botones rápidos de Tallas (incluyendo Única) */}
+                <div className="space-y-1">
+                  <span className="text-[11px] font-semibold text-stone-600 block">
+                    Selecciona Talla (incluye Talla Única):
+                  </span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {QUICK_SIZES.map((sz) => (
+                      <button
+                        key={sz}
+                        type="button"
+                        onClick={() => setNewColorSize(sz)}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition ${
+                          newColorSize.toUpperCase() === sz.toUpperCase()
+                            ? 'bg-[#51344D] text-white border-[#51344D] shadow-2xs'
+                            : 'bg-white text-[#2e1f14] border-stone-200 hover:border-[#E17726]'
+                        }`}
+                      >
+                        {sz === 'Única' ? 'Talla Única' : sz}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Formulario Agregar Color + Talla + Unidades */}
                 <div className="space-y-2 bg-white p-2.5 rounded-xl border border-stone-200">
                   <div className="flex items-center gap-2">
                     <input
@@ -908,98 +1215,213 @@ export const ProductionView: React.FC<ProductionViewProps> = ({
                       type="text"
                       value={newColorName}
                       onChange={(e) => setNewColorName(e.target.value)}
-                      placeholder="Nombre del color"
-                      className="flex-1 min-w-0 px-3 py-2 border border-stone-300 rounded-xl text-xs bg-white"
+                      placeholder="Nombre del color (ej. Blanco)"
+                      className="flex-1 min-w-0 px-3 py-2 border border-stone-300 rounded-xl text-xs bg-white font-semibold"
                     />
                   </div>
-                  <div className="flex items-center gap-2">
-                    <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    <div>
+                      <label className="block text-[10px] text-stone-500 font-semibold mb-0.5">
+                        Talla
+                      </label>
+                      <input
+                        type="text"
+                        list="size-catalog-list"
+                        value={newColorSize}
+                        onChange={(e) => setNewColorSize(e.target.value)}
+                        placeholder="Única, S, M, L..."
+                        className="w-full min-w-0 px-2.5 py-2 border border-stone-300 rounded-xl text-xs bg-white font-bold"
+                      />
+                      <datalist id="size-catalog-list">
+                        {SIZE_CATALOG.map((sz) => (
+                          <option key={sz} value={sz} />
+                        ))}
+                      </datalist>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] text-stone-500 font-semibold mb-0.5">
+                        Unidades
+                      </label>
                       <input
                         type="number"
                         min="1"
                         value={newColorUnits}
                         onChange={(e) => setNewColorUnits(e.target.value)}
                         placeholder="Unidades"
-                        className="w-full min-w-0 px-3 py-2 border border-stone-300 rounded-xl text-xs bg-white font-bold"
+                        className="w-full min-w-0 px-2.5 py-2 border border-stone-300 rounded-xl text-xs bg-white font-bold"
                       />
-                      <span className="text-xs text-stone-500 shrink-0">uds</span>
                     </div>
-                    <button
-                      type="button"
-                      onClick={handleAddColor}
-                      className="bg-[#51344D] hover:bg-[#3B2538] text-white px-4 py-2 rounded-xl text-xs font-bold shrink-0"
-                    >
-                      + Agregar Color
-                    </button>
+                    <div className="col-span-2 sm:col-span-1 flex items-end">
+                      <button
+                        type="button"
+                        onClick={handleAddColorOrSize}
+                        className="w-full bg-[#51344D] hover:bg-[#3B2538] text-white px-3 py-2 rounded-xl text-xs font-bold"
+                      >
+                        + Agregar Color / Talla
+                      </button>
+                    </div>
                   </div>
                 </div>
 
-                {/* Lista de colores agregados */}
-                <div className="space-y-1.5">
-                  {colors.map((c, idx) => (
-                    <div
-                      key={c.id}
-                      className="flex flex-wrap items-center justify-between gap-2 bg-white px-3 py-2 rounded-xl border border-stone-200 text-xs"
-                    >
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className="font-bold text-stone-400">
-                          #{idx + 1}
-                        </span>
-                        <span
-                          className="w-4 h-4 rounded-full border border-stone-300 shrink-0"
-                          style={{ backgroundColor: c.colorHex }}
-                        />
-                        <span className="font-bold text-[#2e1f14] break-words">
-                          {c.colorName}
-                        </span>
-                      </div>
+                {/* Lista de Colores y sus Tallas ordenadas según sizeSortOrder */}
+                <div className="space-y-2.5">
+                  {colors.map((c, idx) => {
+                    const orderedSizes = getOrderedColorSizes(c, sizeSortOrder);
+                    const colorTotal = getColorTotalUnits(c);
+                    const draft = inlineSizeDrafts[c.id] ?? {
+                      size: 'M',
+                      units: '20',
+                    };
 
-                      <div className="flex items-center gap-1.5 ml-auto">
-                        <input
-                          type="number"
-                          min="1"
-                          value={c.units}
-                          onChange={(e) => {
-                            const val = Math.max(1, parseInt(e.target.value, 10) || 1);
-                            setColors(
-                              colors.map((item) =>
-                                item.id === c.id ? { ...item, units: val } : item
-                              )
-                            );
-                          }}
-                          className="w-16 px-2 py-1 border border-stone-200 rounded-lg text-center font-bold"
-                        />
-                        <span className="text-stone-500 text-[11px]">uds</span>
-                        <button
-                          type="button"
-                          onClick={() => moveColor(idx, -1)}
-                          disabled={idx === 0}
-                          className="p-1 text-stone-400 hover:text-stone-700 disabled:opacity-30"
-                          title="Subir prioridad"
-                        >
-                          <ArrowUp className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => moveColor(idx, 1)}
-                          disabled={idx === colors.length - 1}
-                          className="p-1 text-stone-400 hover:text-stone-700 disabled:opacity-30"
-                          title="Bajar prioridad"
-                        >
-                          <ArrowDown className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setColors(colors.filter((item) => item.id !== c.id))
-                          }
-                          className="p-1 text-rose-500 hover:bg-rose-50 rounded-lg"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                    return (
+                      <div
+                        key={c.id}
+                        className="bg-white p-3 rounded-xl border border-stone-200 text-xs space-y-2.5"
+                      >
+                        {/* Cabecera del Color */}
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="font-bold text-stone-400">
+                              Color #{idx + 1}
+                            </span>
+                            <span
+                              className="w-4 h-4 rounded-full border border-stone-300 shrink-0"
+                              style={{ backgroundColor: c.colorHex }}
+                            />
+                            <span className="font-bold text-sm text-[#2e1f14] break-words">
+                              {c.colorName}
+                            </span>
+                            <span className="px-2 py-0.5 rounded-full bg-[#FDF2E9] text-[#E17726] font-extrabold text-[11px]">
+                              {colorTotal} uds
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-1 ml-auto">
+                            <button
+                              type="button"
+                              onClick={() => moveColor(idx, -1)}
+                              disabled={idx === 0}
+                              className="p-1 text-stone-400 hover:text-stone-700 disabled:opacity-30"
+                              title="Subir prioridad de color"
+                            >
+                              <ArrowUp className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => moveColor(idx, 1)}
+                              disabled={idx === colors.length - 1}
+                              className="p-1 text-stone-400 hover:text-stone-700 disabled:opacity-30"
+                              title="Bajar prioridad de color"
+                            >
+                              <ArrowDown className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setColors(
+                                  colors.filter((item) => item.id !== c.id)
+                                )
+                              }
+                              className="p-1 text-rose-500 hover:bg-rose-50 rounded-lg"
+                              title="Eliminar color"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Tallas dentro de este Color (ordenadas según Ascendente o Descendente) */}
+                        <div className="pl-2 border-l-2 border-[#E17726]/40 space-y-1.5">
+                          <span className="text-[10px] font-bold uppercase text-stone-500 block">
+                            Tallas en orden{' '}
+                            {sizeSortOrder === 'asc'
+                              ? 'Ascendente (↑)'
+                              : 'Descendente (↓)'}
+                            :
+                          </span>
+
+                          {orderedSizes.map((s, sIdx) => (
+                            <div
+                              key={s.size}
+                              className="flex items-center justify-between gap-2 bg-[#f5f2f0] px-2.5 py-1.5 rounded-lg"
+                            >
+                              <span className="font-bold text-[#2e1f14]">
+                                {sIdx + 1}. Talla {s.size}
+                              </span>
+                              <div className="flex items-center gap-1.5">
+                                <input
+                                  type="number"
+                                  min="1"
+                                  value={s.units}
+                                  onChange={(e) =>
+                                    handleUpdateSizeUnits(
+                                      c.id,
+                                      s.size,
+                                      parseInt(e.target.value, 10) || 1
+                                    )
+                                  }
+                                  className="w-16 px-2 py-1 bg-white border border-stone-300 rounded-lg text-center font-bold"
+                                />
+                                <span className="text-[11px] text-stone-500">
+                                  uds
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    handleRemoveSizeFromColor(c.id, s.size)
+                                  }
+                                  className="p-1 text-rose-500 hover:bg-rose-50 rounded-md"
+                                  title="Quitar talla"
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+
+                          {/* Agregar otra talla rápidamente dentro de este mismo color */}
+                          <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                            <select
+                              value={draft.size}
+                              onChange={(e) =>
+                                setInlineSizeDrafts({
+                                  ...inlineSizeDrafts,
+                                  [c.id]: { ...draft, size: e.target.value },
+                                })
+                              }
+                              className="min-w-0 px-2 py-1 border border-stone-300 rounded-lg text-[11px] bg-white font-semibold"
+                            >
+                              {SIZE_CATALOG.map((sz) => (
+                                <option key={sz} value={sz}>
+                                  Talla {sz}
+                                </option>
+                              ))}
+                            </select>
+                            <input
+                              type="number"
+                              min="1"
+                              value={draft.units}
+                              onChange={(e) =>
+                                setInlineSizeDrafts({
+                                  ...inlineSizeDrafts,
+                                  [c.id]: { ...draft, units: e.target.value },
+                                })
+                              }
+                              placeholder="Uds"
+                              className="w-16 px-2 py-1 border border-stone-300 rounded-lg text-[11px] bg-white font-bold text-center"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleAddSizeToExistingColor(c.id)}
+                              className="bg-[#E17726] hover:bg-[#c86419] text-white px-2.5 py-1 rounded-lg text-[11px] font-bold"
+                            >
+                              + Talla a {c.colorName}
+                            </button>
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
 
@@ -1201,7 +1623,7 @@ export const ProductionView: React.FC<ProductionViewProps> = ({
                   className="flex-1 py-2.5 rounded-xl bg-[#E17726] hover:bg-[#c86419] text-white font-bold text-sm flex items-center justify-center gap-1.5 shadow-sm active:scale-95 transition"
                 >
                   <Check className="w-4 h-4" />
-                  Guardar
+                  Guardar y Programar
                 </button>
               </div>
             </form>

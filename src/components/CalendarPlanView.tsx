@@ -15,9 +15,9 @@ import {
   RotateCcw,
   X,
   ArrowRight,
-  RefreshCw,
   History,
   EyeOff,
+  Ruler,
 } from 'lucide-react';
 import {
   ProductionOrder,
@@ -27,6 +27,8 @@ import {
 import {
   buildProductionSchedule,
   formatDurationHuman,
+  getColorTotalUnits,
+  getOrderedColorSizes,
   validateExecutionReport,
 } from '../domain/scheduler';
 import { getTodayIso } from '../storage';
@@ -35,7 +37,6 @@ interface CalendarPlanViewProps {
   productions: ProductionOrder[];
   workshopConfig: WorkshopConfig;
   selectedProductionId: string | 'ALL';
-  hasUnrecalculatedChanges: boolean;
   onSelectProductionId: (id: string | 'ALL') => void;
   onToggleTaskComplete: (productionId: string, taskKey: string) => void;
   onSubmitExecutionReport: (
@@ -44,25 +45,23 @@ interface CalendarPlanViewProps {
       reportDate: string;
       scheduledSourceDate: string;
       colorId: string;
+      size?: string;
       operationId: string;
       unitsExecuted: number;
       plannedUnitsOnBlock: number;
     }
   ) => void;
   onRemoveExecutionLog: (productionId: string, logId: string) => void;
-  onRecalculateSchedule: () => void;
 }
 
 export const CalendarPlanView: React.FC<CalendarPlanViewProps> = ({
   productions,
   workshopConfig,
   selectedProductionId,
-  hasUnrecalculatedChanges,
   onSelectProductionId,
   onToggleTaskComplete,
   onSubmitExecutionReport,
   onRemoveExecutionLog,
-  onRecalculateSchedule,
 }) => {
   // Default to 'standard' or 'fit-deadline' toggle
   const [scheduleMode, setScheduleMode] = useState<'fit-deadline' | 'standard'>(
@@ -168,6 +167,7 @@ export const CalendarPlanView: React.FC<CalendarPlanViewProps> = ({
       reportDate: reportDateInput,
       scheduledSourceDate: reportingBlock.date,
       colorId: reportingBlock.colorId,
+      size: reportingBlock.size,
       operationId: reportingBlock.operationId,
       unitsExecuted: numericUnits,
       plannedUnitsOnBlock: reportingBlock.unitsAssigned,
@@ -184,6 +184,7 @@ export const CalendarPlanView: React.FC<CalendarPlanViewProps> = ({
       reportDate: reportDateInput,
       scheduledSourceDate: reportingBlock.date,
       colorId: reportingBlock.colorId,
+      size: reportingBlock.size,
       operationId: reportingBlock.operationId,
       unitsExecuted: numericUnits,
       plannedUnitsOnBlock: reportingBlock.unitsAssigned,
@@ -199,28 +200,14 @@ export const CalendarPlanView: React.FC<CalendarPlanViewProps> = ({
     <div className="space-y-4 pb-24">
       {/* Header Banner (#51344D Soluciones Open Source + #E17726) */}
       <div className="bg-gradient-to-r from-[#51344D] via-[#5d3c59] to-[#3B2538] border-b-4 border-[#E17726] rounded-2xl p-3.5 sm:p-4 text-white shadow-md space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="min-w-0">
-            <h2 className="text-base sm:text-lg font-bold flex items-center gap-2">
-              <CalendarIcon className="w-5 h-5 text-[#E17726] shrink-0" />
-              <span>Calendario Día a Día</span>
-            </h2>
-            <p className="text-xs text-stone-200 mt-0.5 leading-snug">
-              Reporta unidades ejecutadas, traslada faltantes al día siguiente o adelanta operaciones de días futuros.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={onRecalculateSchedule}
-            className={`w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold shadow-xs active:scale-95 transition shrink-0 ${
-              hasUnrecalculatedChanges
-                ? 'bg-amber-400 hover:bg-amber-300 text-[#2e1f14] ring-2 ring-white'
-                : 'bg-[#E17726] hover:bg-[#c86419] text-white'
-            }`}
-          >
-            <RefreshCw className="w-3.5 h-3.5 shrink-0" />
-            <span>Recalcular Programación</span>
-          </button>
+        <div>
+          <h2 className="text-base sm:text-lg font-bold flex items-center gap-2">
+            <CalendarIcon className="w-5 h-5 text-[#E17726] shrink-0" />
+            <span>Calendario Día a Día (Por Color y Talla)</span>
+          </h2>
+          <p className="text-xs text-stone-200 mt-0.5 leading-snug">
+            Evacuación por color y orden de tallaje con recálculo automático en tiempo real.
+          </p>
         </div>
 
         {/* Filter by Production & Mode Toggle */}
@@ -267,22 +254,27 @@ export const CalendarPlanView: React.FC<CalendarPlanViewProps> = ({
         </div>
       </div>
 
-      {/* Color Evacuation Roadmap Cards */}
+      {/* Color & Size Evacuation Roadmap Cards */}
       {filteredOrders.length > 0 && (
         <div className="bg-white rounded-2xl p-3.5 border border-stone-200 shadow-xs space-y-2.5">
           <div className="flex items-center justify-between gap-2">
             <h3 className="text-xs font-bold text-[#2e1f14] flex items-center gap-1.5">
               <Layers className="w-4 h-4 text-[#E17726] shrink-0" />
-              <span>Ruta de Evacuación por Lote de Color</span>
+              <span>Ruta de Evacuación por Color y Talla</span>
             </h3>
-            <span className="text-[11px] text-stone-500 shrink-0">1 color a la vez</span>
+            <span className="text-[11px] text-stone-500 shrink-0">
+              1 color a la vez • Ordenado por talla
+            </span>
           </div>
 
           <div className="flex gap-2.5 overflow-x-auto pb-1">
-            {filteredOrders.flatMap((order) =>
-              order.colors.map((col, idx) => {
+            {filteredOrders.flatMap((order) => {
+              const sortOrd = order.sizeSortOrder ?? 'asc';
+              return order.colors.map((col, idx) => {
                 const finishDate =
                   schedule.summaries[order.id]?.colorCompletionDates[col.id];
+                const orderedSizes = getOrderedColorSizes(col, sortOrd);
+                const colTotal = getColorTotalUnits(col);
                 return (
                   <button
                     key={`${order.id}-${col.id}`}
@@ -294,13 +286,17 @@ export const CalendarPlanView: React.FC<CalendarPlanViewProps> = ({
                         setSelectedDate(finishDate);
                       }
                     }}
-                    className="min-w-[160px] text-left bg-[#f5f2f0] hover:bg-[#FDF2E9] border border-stone-200 rounded-xl p-2.5 transition shrink-0"
+                    className="min-w-[185px] text-left bg-[#f5f2f0] hover:bg-[#FDF2E9] border border-stone-200 rounded-xl p-2.5 transition shrink-0 space-y-1"
                   >
                     <div className="flex items-center justify-between text-[10px] text-stone-500 font-semibold">
-                      <span>Lote Color #{idx + 1}</span>
-                      <span>{col.units} uds</span>
+                      <span>
+                        Color #{idx + 1} ({sortOrd === 'asc' ? '↑ Asc' : '↓ Desc'})
+                      </span>
+                      <span className="font-bold text-[#51344D]">
+                        {colTotal} uds
+                      </span>
                     </div>
-                    <div className="flex items-center gap-2 mt-1">
+                    <div className="flex items-center gap-2">
                       <span
                         className="w-4 h-4 rounded-full border border-stone-300 shrink-0"
                         style={{ backgroundColor: col.colorHex }}
@@ -309,10 +305,20 @@ export const CalendarPlanView: React.FC<CalendarPlanViewProps> = ({
                         {col.colorName}
                       </span>
                     </div>
-                    <p className="text-[10px] text-stone-500 truncate mt-0.5">
+                    <div className="flex flex-wrap gap-1 pt-0.5">
+                      {orderedSizes.map((s) => (
+                        <span
+                          key={s.size}
+                          className="text-[9px] font-bold bg-white border border-stone-200 px-1.5 py-0.5 rounded text-[#2e1f14]"
+                        >
+                          {s.size}: {s.units}
+                        </span>
+                      ))}
+                    </div>
+                    <p className="text-[10px] text-stone-500 truncate">
                       {order.garmentName}
                     </p>
-                    <div className="mt-1.5 pt-1.5 border-t border-stone-200/70 flex items-center justify-between text-[10px]">
+                    <div className="pt-1 border-t border-stone-200/70 flex items-center justify-between text-[10px]">
                       <span className="text-stone-500">Evacuado el:</span>
                       <span className="font-bold text-emerald-700">
                         {finishDate ?? 'Pendiente'}
@@ -320,8 +326,8 @@ export const CalendarPlanView: React.FC<CalendarPlanViewProps> = ({
                     </div>
                   </button>
                 );
-              })
-            )}
+              });
+            })}
           </div>
         </div>
       )}
@@ -336,11 +342,16 @@ export const CalendarPlanView: React.FC<CalendarPlanViewProps> = ({
               <div className="flex items-center gap-2 text-xs text-stone-600">
                 <CalendarIcon className="w-4 h-4 text-[#E17726] shrink-0" />
                 <span>
-                  Día actual: <strong className="text-[#2e1f14]">{todayIso}</strong>
+                  Día actual:{' '}
+                  <strong className="text-[#2e1f14]">{todayIso}</strong>
                 </span>
                 {!showPastDays && pastDays.length > 0 && (
                   <span className="text-[11px] text-stone-400">
-                    ({pastDays.length} {pastDays.length === 1 ? 'día anterior oculto' : 'días anteriores ocultos'})
+                    ({pastDays.length}{' '}
+                    {pastDays.length === 1
+                      ? 'día anterior oculto'
+                      : 'días anteriores ocultos'}
+                    )
                   </span>
                 )}
               </div>
@@ -435,13 +446,7 @@ export const CalendarPlanView: React.FC<CalendarPlanViewProps> = ({
                         {day.dayName.slice(0, 3)}
                       </span>
                       {isToday && (
-                        <span
-                          className={`text-[8px] font-extrabold px-1 rounded-sm uppercase ${
-                            isSelected
-                              ? 'bg-[#E17726] text-white'
-                              : 'bg-[#E17726] text-white'
-                          }`}
-                        >
+                        <span className="text-[8px] font-extrabold px-1 rounded-sm uppercase bg-[#E17726] text-white">
                           Hoy
                         </span>
                       )}
@@ -502,7 +507,8 @@ export const CalendarPlanView: React.FC<CalendarPlanViewProps> = ({
           ) : (
             <div className="bg-white rounded-2xl p-6 text-center border border-stone-200 space-y-3">
               <p className="text-xs text-stone-600">
-                Todas las fechas de esta programación son anteriores al día actual (<strong>{todayIso}</strong>).
+                Todas las fechas de esta programación son anteriores al día actual (
+                <strong>{todayIso}</strong>).
               </p>
               <button
                 type="button"
@@ -547,7 +553,8 @@ export const CalendarPlanView: React.FC<CalendarPlanViewProps> = ({
                 {futurePendingBlocks.length > 0 && (
                   <div className="pt-2.5 border-t border-stone-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                     <span className="text-xs text-stone-600">
-                      ¿Terminaste temprano o quieres adelantar trabajo de días posteriores en <strong>{currentDayPlan.date}</strong>?
+                      ¿Terminaste temprano o quieres adelantar trabajo de días posteriores en{' '}
+                      <strong>{currentDayPlan.date}</strong>?
                     </span>
                     <button
                       type="button"
@@ -566,7 +573,9 @@ export const CalendarPlanView: React.FC<CalendarPlanViewProps> = ({
                 <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-3.5 space-y-2">
                   <div className="flex items-center gap-1.5 text-emerald-800 font-bold text-xs">
                     <Sparkles className="w-4 h-4 text-emerald-600 shrink-0" />
-                    <span>¡Colores 100% Terminados y Listos para Evacuar este Día!</span>
+                    <span>
+                      ¡Colores 100% Terminados y Listos para Evacuar este Día!
+                    </span>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {currentDayPlan.colorsEvacuated.map((ev) => (
@@ -648,7 +657,7 @@ export const CalendarPlanView: React.FC<CalendarPlanViewProps> = ({
                         </div>
                       </div>
 
-                      {/* Row 2: Badges & Units Assigned below Operation Name */}
+                      {/* Row 2: Badges (Time, Color, Size, Machine) & Units Assigned below Operation Name */}
                       <div className="flex flex-wrap items-center justify-between gap-2 pl-7">
                         <div className="flex flex-wrap items-center gap-1.5">
                           <span className="text-xs font-extrabold text-[#51344D] bg-[#F4EEF3] px-2 py-0.5 rounded-md flex items-center gap-1">
@@ -661,6 +670,10 @@ export const CalendarPlanView: React.FC<CalendarPlanViewProps> = ({
                               style={{ backgroundColor: block.colorHex }}
                             />
                             Color {block.colorName}
+                          </span>
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-extrabold bg-[#FDF2E9] text-[#E17726] border border-[#E17726]/40">
+                            <Ruler className="w-3 h-3 shrink-0" />
+                            Talla {block.size}
                           </span>
                           <span className="text-[11px] text-stone-600 font-medium flex items-center gap-1 bg-stone-100 px-2 py-0.5 rounded-md">
                             <Wrench className="w-3 h-3 text-stone-500" />
@@ -721,15 +734,24 @@ export const CalendarPlanView: React.FC<CalendarPlanViewProps> = ({
                                 {block.colorName} ({block.totalColorUnits} uds)!
                               </span>
                             </span>
+                          ) : block.isSizeCompletedInThisBlock ? (
+                            <span className="text-[#51344D] font-bold flex items-center gap-1">
+                              <CheckCircle2 className="w-3.5 h-3.5 text-[#E17726] shrink-0" />
+                              <span>
+                                ¡Completa el 100% de la Talla {block.size} (
+                                {block.totalSizeUnits} uds) del color{' '}
+                                {block.colorName}!
+                              </span>
+                            </span>
                           ) : block.isOperationCompletedInThisBlock ? (
                             <span className="text-stone-600">
-                              Completa las {block.totalColorUnits} uds del color{' '}
-                              {block.colorName}
+                              Completa las {block.totalSizeUnits} uds de Talla{' '}
+                              {block.size} ({block.colorName})
                             </span>
                           ) : (
                             <span className="text-amber-700 font-medium">
                               Avance parcial ({block.unitsAssigned} de{' '}
-                              {block.totalColorUnits} uds del color)
+                              {block.totalSizeUnits} uds de Talla {block.size})
                             </span>
                           )}
                         </div>
@@ -797,7 +819,8 @@ export const CalendarPlanView: React.FC<CalendarPlanViewProps> = ({
                     Adelantar Operación en {currentSelectedDate}
                   </h3>
                   <p className="text-xs text-stone-500">
-                    Selecciona qué operación de un día posterior realizaste en la fecha {currentSelectedDate}
+                    Selecciona qué operación de un día posterior realizaste en la fecha{' '}
+                    {currentSelectedDate}
                   </p>
                 </div>
               </div>
@@ -834,6 +857,9 @@ export const CalendarPlanView: React.FC<CalendarPlanViewProps> = ({
                         />
                         {fb.colorName}
                       </span>
+                      <span className="font-bold text-[#E17726] bg-[#FDF2E9] px-1.5 py-0.5 rounded">
+                        Talla {fb.size}
+                      </span>
                       <span className="text-[11px] text-stone-500">
                         ({fb.machine})
                       </span>
@@ -850,7 +876,7 @@ export const CalendarPlanView: React.FC<CalendarPlanViewProps> = ({
         </div>
       )}
 
-      {/* MODAL 2: Enter Executed Units & Report Date (Saves directly without confirmation modal) */}
+      {/* MODAL 2: Enter Executed Units & Report Date */}
       {reportingBlock && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4">
           <div className="bg-white w-full max-w-md max-h-[90vh] overflow-y-auto overflow-x-hidden rounded-t-3xl sm:rounded-2xl p-4 sm:p-5 shadow-xl space-y-4">
@@ -882,14 +908,14 @@ export const CalendarPlanView: React.FC<CalendarPlanViewProps> = ({
                 </span>
               </div>
               <div className="flex flex-wrap items-center justify-between gap-1 pt-1 border-t border-stone-200/70">
-                <span className="text-stone-500">Color del lote:</span>
+                <span className="text-stone-500">Color y Talla:</span>
                 <span className="inline-flex items-center gap-1.5 font-bold text-[#2e1f14]">
                   <span
                     className="w-3 h-3 rounded-full border border-stone-400 shrink-0"
                     style={{ backgroundColor: reportingBlock.colorHex }}
                   />
-                  {reportingBlock.colorName} ({reportingBlock.totalColorUnits} uds
-                  totales)
+                  {reportingBlock.colorName} • Talla {reportingBlock.size} (
+                  {reportingBlock.totalSizeUnits} uds)
                 </span>
               </div>
               <div className="flex flex-wrap items-center justify-between gap-1">
@@ -946,11 +972,14 @@ export const CalendarPlanView: React.FC<CalendarPlanViewProps> = ({
                   type="number"
                   step="any"
                   min="0"
-                  max={currentValidation?.maxAllowedUnits ?? reportingBlock.totalColorUnits}
+                  max={
+                    currentValidation?.maxAllowedUnits ??
+                    reportingBlock.totalSizeUnits
+                  }
                   required
                   value={unitsExecutedInput}
                   onChange={(e) => setUnitsExecutedInput(e.target.value)}
-                  placeholder="Ej. 40"
+                  placeholder="Ej. 20"
                   className="w-full min-w-0 px-3.5 py-2.5 border border-stone-300 rounded-xl text-base font-bold text-[#2e1f14] focus:ring-2 focus:ring-[#E17726] focus:outline-none"
                 />
 
@@ -988,7 +1017,7 @@ export const CalendarPlanView: React.FC<CalendarPlanViewProps> = ({
                         }
                         className="px-2.5 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-xs font-medium"
                       >
-                        Todo el color ({currentValidation.maxAllowedUnits} uds)
+                        Toda la talla ({currentValidation.maxAllowedUnits} uds)
                       </button>
                     )}
                 </div>
@@ -1030,7 +1059,7 @@ export const CalendarPlanView: React.FC<CalendarPlanViewProps> = ({
                   disabled={!currentValidation?.valid}
                   className="flex-1 py-2.5 rounded-xl bg-[#E17726] hover:bg-[#c86419] disabled:bg-stone-300 text-white font-bold text-sm flex items-center justify-center gap-1.5 shadow-sm active:scale-95 transition"
                 >
-                  Guardar Reporte
+                  Guardar y Recalcular
                 </button>
               </div>
             </form>

@@ -15,6 +15,35 @@ export const COLOR_PALETTE = [
   { name: 'Beige / Arena', hex: '#D6D3D1' },
 ];
 
+export const SIZE_CATALOG = [
+  'Única',
+  '2',
+  '4',
+  '6',
+  '8',
+  '10',
+  '12',
+  '14',
+  '16',
+  'XXS',
+  'XS',
+  'S',
+  'M',
+  'L',
+  'XL',
+  'XXL',
+  '3XL',
+  '4XL',
+  '28',
+  '30',
+  '32',
+  '34',
+  '36',
+  '38',
+  '40',
+  '42',
+];
+
 export const DEFAULT_OPERATIONS: SewingOperation[] = [
   {
     id: 'op-1',
@@ -122,10 +151,38 @@ export function createSampleProductionOrder(todayIso: string, deliveryIso: strin
     referenceCode: 'REF-101',
     receivedDate: todayIso,
     deliveryDate: deliveryIso,
+    deliveryMode: 'asap',
+    sizeSortOrder: 'asc',
     colors: [
-      { id: 'col-1', colorName: 'Blanco', colorHex: '#F8FAFC', units: 120 },
-      { id: 'col-2', colorName: 'Negro', colorHex: '#1E293B', units: 100 },
-      { id: 'col-3', colorName: 'Rojo', colorHex: '#DC2626', units: 80 },
+      {
+        id: 'col-1',
+        colorName: 'Blanco',
+        colorHex: '#F8FAFC',
+        units: 120,
+        sizes: [
+          { size: 'S', units: 40 },
+          { size: 'M', units: 50 },
+          { size: 'L', units: 30 },
+        ],
+      },
+      {
+        id: 'col-2',
+        colorName: 'Negro',
+        colorHex: '#1E293B',
+        units: 100,
+        sizes: [
+          { size: 'S', units: 30 },
+          { size: 'M', units: 40 },
+          { size: 'L', units: 30 },
+        ],
+      },
+      {
+        id: 'col-3',
+        colorName: 'Rojo',
+        colorHex: '#DC2626',
+        units: 80,
+        sizes: [{ size: 'Única', units: 80 }],
+      },
     ],
     operations: [
       { operationId: 'op-1', operationName: 'Unir hombros', machine: 'Fileteadora', minutesPerUnit: 0.4 },

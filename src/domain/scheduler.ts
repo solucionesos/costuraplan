@@ -1,4 +1,5 @@
 import {
+  ColorBatch,
   DayPlan,
   DaySchedule,
   DeliveryMode,
@@ -7,10 +8,81 @@ import {
   ProductionOrder,
   ProductionScheduleSummary,
   ScheduledTaskBlock,
+  SizeBatch,
+  SizeSortOrder,
   WorkshopConfig,
 } from './types';
 
 const DAY_NAMES_ES = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+
+const LETTER_SIZE_RANKS: Record<string, number> = {
+  UNICA: 0,
+  ÚNICA: 0,
+  U: 0,
+  XXS: 201,
+  '2XS': 201,
+  XS: 202,
+  S: 203,
+  M: 204,
+  L: 205,
+  XL: 206,
+  XXL: 207,
+  '2XL': 207,
+  XXXL: 208,
+  '3XL': 208,
+  '4XL': 209,
+  '5XL': 210,
+};
+
+export function getSizeRank(size: string): number {
+  const normalized = size.trim().toUpperCase();
+  if (normalized in LETTER_SIZE_RANKS) {
+    return LETTER_SIZE_RANKS[normalized];
+  }
+  const numericVal = Number(normalized);
+  if (!Number.isNaN(numericVal) && normalized !== '') {
+    return 100 + numericVal;
+  }
+  return 500;
+}
+
+export function sortSizes(
+  sizes: SizeBatch[],
+  sortOrder: SizeSortOrder = 'asc'
+): SizeBatch[] {
+  const direction = sortOrder === 'desc' ? -1 : 1;
+  return [...sizes]
+    .filter((s) => s.units > 0 && s.size.trim().length > 0)
+    .sort((a, b) => {
+      const rankA = getSizeRank(a.size);
+      const rankB = getSizeRank(b.size);
+      if (rankA !== rankB) {
+        return (rankA - rankB) * direction;
+      }
+      return a.size.localeCompare(b.size, 'es', { numeric: true }) * direction;
+    });
+}
+
+export function getOrderedColorSizes(
+  color: ColorBatch,
+  sortOrder: SizeSortOrder = 'asc'
+): SizeBatch[] {
+  if (color.sizes && color.sizes.length > 0) {
+    const valid = sortSizes(color.sizes, sortOrder);
+    if (valid.length > 0) {
+      return valid;
+    }
+  }
+  return color.units > 0 ? [{ size: 'Única', units: color.units }] : [];
+}
+
+export function getColorTotalUnits(color: ColorBatch): number {
+  if (color.sizes && color.sizes.length > 0) {
+    const sum = color.sizes.reduce((acc, s) => acc + Math.max(0, s.units), 0);
+    if (sum > 0) return sum;
+  }
+  return Math.max(0, color.units);
+}
 
 export function parseTimeToMinutes(clock: string): number {
   const parts = clock.trim().split(':');
@@ -150,11 +222,24 @@ export function reorderProductionOperations(
 export function getExecutedUnitsForOperation(
   order: ProductionOrder,
   colorId: string,
-  operationId: string
+  operationId: string,
+  size?: string
 ): number {
   const logs = order.executionLogs ?? [];
+  const color = order.colors.find((c) => c.id === colorId);
+  const orderedSizes = color
+    ? getOrderedColorSizes(color, order.sizeSortOrder ?? 'asc')
+    : [];
+  const isSingleSize = orderedSizes.length <= 1;
+
   return logs
-    .filter((l) => l.colorId === colorId && l.operationId === operationId)
+    .filter((l) => {
+      if (l.colorId !== colorId || l.operationId !== operationId) return false;
+      if (!size) return true;
+      if (l.size === size) return true;
+      if (!l.size && (size === 'Única' || isSingleSize)) return true;
+      return false;
+    })
     .reduce((sum, l) => sum + Math.max(0, l.unitsExecuted), 0);
 }
 
@@ -175,6 +260,7 @@ export function validateExecutionReport(
     reportDate: string;
     scheduledSourceDate: string;
     colorId: string;
+    size?: string;
     operationId: string;
     unitsExecuted: number;
     plannedUnitsOnBlock: number;
@@ -205,12 +291,26 @@ export function validateExecutionReport(
     };
   }
 
+  const orderedSizes = getOrderedColorSizes(color, order.sizeSortOrder ?? 'asc');
+  const matchingSize = params.size
+    ? orderedSizes.find((s) => s.size === params.size)
+    : undefined;
+  const targetTotalUnits = matchingSize
+    ? matchingSize.units
+    : getColorTotalUnits(color);
+
   const alreadyExecuted = getExecutedUnitsForOperation(
     order,
     params.colorId,
-    params.operationId
+    params.operationId,
+    matchingSize ? matchingSize.size : undefined
   );
-  const maxAllowedUnits = Math.max(0, Math.round((color.units - alreadyExecuted) * 10) / 10);
+  const maxAllowedUnits = Math.max(
+    0,
+    Math.round((targetTotalUnits - alreadyExecuted) * 10) / 10
+  );
+
+  const sizeLabel = matchingSize ? ` - Talla ${matchingSize.size}` : '';
 
   if (isNaN(params.unitsExecuted) || params.unitsExecuted < 0) {
     return {
@@ -226,7 +326,7 @@ export function validateExecutionReport(
   if (params.unitsExecuted > maxAllowedUnits + 0.01) {
     return {
       valid: false,
-      error: `No puedes reportar ${params.unitsExecuted} uds porque solo quedan ${maxAllowedUnits} uds pendientes para ${op.operationName} (${color.colorName}).`,
+      error: `No puedes reportar ${params.unitsExecuted} uds porque solo quedan ${maxAllowedUnits} uds pendientes para ${op.operationName} (${color.colorName}${sizeLabel}).`,
       noveltyType: 'exact',
       shortfallUnits: 0,
       maxAllowedUnits,
@@ -252,7 +352,7 @@ export function validateExecutionReport(
       noveltyType: 'advance',
       shortfallUnits: 0,
       maxAllowedUnits,
-      summaryMessage: `Estás reportando el día ${params.reportDate} un adelanto de ${params.unitsExecuted} uds de "${op.operationName}" (Color ${color.colorName}) que estaba programada para el día ${params.scheduledSourceDate}. Se descontarán estas unidades del día futuro y se recalculará todo el calendario.`,
+      summaryMessage: `Estás reportando el día ${params.reportDate} un adelanto de ${params.unitsExecuted} uds de "${op.operationName}" (Color ${color.colorName}${sizeLabel}) que estaba programada para el día ${params.scheduledSourceDate}. Se descontarán estas unidades del día futuro y se recalculará todo el calendario.`,
     };
   }
 
@@ -267,7 +367,7 @@ export function validateExecutionReport(
       noveltyType: 'shortfall',
       shortfallUnits: shortfall,
       maxAllowedUnits,
-      summaryMessage: `Se ejecutaron ${params.unitsExecuted} uds de las ${params.plannedUnitsOnBlock} uds programadas para el día ${params.reportDate}. Las ${shortfall} unidades faltantes de "${op.operationName}" (Color ${color.colorName}) se trasladarán automáticamente al siguiente día hábil y se reprogramará el calendario.`,
+      summaryMessage: `Se ejecutaron ${params.unitsExecuted} uds de las ${params.plannedUnitsOnBlock} uds programadas para el día ${params.reportDate}. Las ${shortfall} unidades faltantes de "${op.operationName}" (Color ${color.colorName}${sizeLabel}) se trasladarán automáticamente al siguiente día hábil y se reprogramará el calendario.`,
     };
   }
 
@@ -287,7 +387,7 @@ export function validateExecutionReport(
     noveltyType: 'exact',
     shortfallUnits: 0,
     maxAllowedUnits,
-    summaryMessage: `Se completaron las ${params.unitsExecuted} uds programadas de "${op.operationName}" (Color ${color.colorName}) en el día ${params.reportDate}.`,
+    summaryMessage: `Se completaron las ${params.unitsExecuted} uds programadas de "${op.operationName}" (Color ${color.colorName}${sizeLabel}) en el día ${params.reportDate}.`,
   };
 }
 
@@ -297,6 +397,7 @@ export function applyExecutionReportToOrder(
     reportDate: string;
     scheduledSourceDate: string;
     colorId: string;
+    size?: string;
     operationId: string;
     unitsExecuted: number;
     plannedUnitsOnBlock: number;
@@ -311,6 +412,7 @@ export function applyExecutionReportToOrder(
     reportDate: params.reportDate,
     scheduledSourceDate: params.scheduledSourceDate,
     colorId: params.colorId,
+    size: params.size,
     operationId: params.operationId,
     unitsExecuted: Math.round(params.unitsExecuted * 10) / 10,
     plannedUnitsAtReport: params.plannedUnitsOnBlock,
@@ -339,15 +441,23 @@ export function evaluateProductionSummary(
   config: WorkshopConfig
 ): ProductionScheduleSummary {
   const deliveryMode: DeliveryMode = order.deliveryMode ?? 'asap';
-  const totalUnits = order.colors.reduce((sum, c) => sum + Math.max(0, c.units), 0);
-  const minutesPerUnit = order.operations.reduce((sum, op) => sum + Math.max(0, op.minutesPerUnit), 0);
+  const sizeSortOrder: SizeSortOrder = order.sizeSortOrder ?? 'asc';
+  const totalUnits = order.colors.reduce(
+    (sum, c) => sum + getColorTotalUnits(c),
+    0
+  );
+  const minutesPerUnit = order.operations.reduce(
+    (sum, op) => sum + Math.max(0, op.minutesPerUnit),
+    0
+  );
   const totalRequiredMinutes = Math.round(totalUnits * minutesPerUnit * 100) / 100;
 
   let executedMinutes = 0;
   for (const color of order.colors) {
+    const colorUnits = getColorTotalUnits(color);
     for (const op of order.operations) {
       const doneUnits = Math.min(
-        color.units,
+        colorUnits,
         getExecutedUnitsForOperation(order, color.id, op.operationId)
       );
       executedMinutes += doneUnits * op.minutesPerUnit;
@@ -383,6 +493,7 @@ export function evaluateProductionSummary(
   return {
     productionId: order.id,
     deliveryMode,
+    sizeSortOrder,
     totalUnits,
     minutesPerUnit: Math.round(minutesPerUnit * 100) / 100,
     totalRequiredMinutes,
@@ -489,6 +600,7 @@ export function buildProductionSchedule(
 
   // STEP 1: Place all actual reported ExecutionLogs on their reportDate first
   for (const order of sortedOrders) {
+    const sizeSortOrder: SizeSortOrder = order.sizeSortOrder ?? 'asc';
     const logs = [...(order.executionLogs ?? [])].sort((a, b) =>
       a.reportDate.localeCompare(b.reportDate)
     );
@@ -500,9 +612,19 @@ export function buildProductionSchedule(
       const op = order.operations.find((o) => o.operationId === log.operationId);
       if (!color || !op) continue;
 
-      const key = `${color.id}__${op.operationId}`;
+      const orderedSizes = getOrderedColorSizes(color, sizeSortOrder);
+      const colorTotalUnits = getColorTotalUnits(color);
+      const resolvedSize =
+        log.size ?? orderedSizes[0]?.size ?? 'Única';
+      const matchingSizeObj = orderedSizes.find((s) => s.size === resolvedSize);
+      const sizeMaxUnits = matchingSizeObj ? matchingSizeObj.units : colorTotalUnits;
+
+      const key = `${color.id}__${resolvedSize}__${op.operationId}`;
       const prevDone = runningUnitsByKey.get(key) ?? 0;
-      const effectiveUnits = Math.max(0, Math.min(color.units - prevDone, log.unitsExecuted));
+      const effectiveUnits = Math.max(
+        0,
+        Math.min(sizeMaxUnits - prevDone, log.unitsExecuted)
+      );
       const newDone = prevDone + effectiveUnits;
       runningUnitsByKey.set(key, newDone);
 
@@ -521,7 +643,7 @@ export function buildProductionSchedule(
         Math.round((dayPlan.capacityMinutes - dayPlan.usedMinutes) * 100) / 100
       );
 
-      const isOpDone = newDone >= color.units - 0.001;
+      const isOpDone = newDone >= sizeMaxUnits - 0.001;
       const isAdvance = Boolean(
         log.scheduledSourceDate && log.scheduledSourceDate > log.reportDate
       );
@@ -535,11 +657,12 @@ export function buildProductionSchedule(
       const allColorOpsDone =
         isOpDone &&
         order.operations.every((candidateOp) => {
-          const totalForCandidate =
-            candidateOp.operationId === op.operationId
-              ? newDone
-              : getExecutedUnitsForOperation(order, color.id, candidateOp.operationId);
-          return totalForCandidate >= color.units - 0.001;
+          const totalForCandidate = getExecutedUnitsForOperation(
+            order,
+            color.id,
+            candidateOp.operationId
+          );
+          return totalForCandidate >= colorTotalUnits - 0.001;
         });
 
       if (effectiveUnits > 0 || shortfallMoved > 0) {
@@ -552,17 +675,20 @@ export function buildProductionSchedule(
           colorId: color.id,
           colorName: color.colorName,
           colorHex: color.colorHex,
+          size: resolvedSize,
+          totalSizeUnits: sizeMaxUnits,
           operationId: op.operationId,
           operationName: op.operationName,
           machine: op.machine,
           unitsAssigned: effectiveUnits,
           unitsExecuted: effectiveUnits,
           shortfallUnitsMovedNextDay: shortfallMoved,
-          totalColorUnits: color.units,
+          totalColorUnits: colorTotalUnits,
           minutesAssigned: allocatedMinutes,
           startClock: clocks.startClock,
           endClock: clocks.endClock,
           isOperationCompletedInThisBlock: isOpDone,
+          isSizeCompletedInThisBlock: isOpDone,
           isColorCompletedInThisBlock: allColorOpsDone,
           isAfterDeadline: log.reportDate > order.deliveryDate,
           isExecutedReport: true,
@@ -580,7 +706,7 @@ export function buildProductionSchedule(
           colorId: color.id,
           colorName: color.colorName,
           colorHex: color.colorHex,
-          totalUnits: color.units,
+          totalUnits: colorTotalUnits,
         });
         summaries[order.id].colorCompletionDates[color.id] = log.reportDate;
         summaries[order.id].estimatedCompletionDate = log.reportDate;
@@ -588,10 +714,11 @@ export function buildProductionSchedule(
     }
   }
 
-  // STEP 2: Schedule remaining pending units per (color, operation) evacuating Color by Color
+  // STEP 2: Schedule remaining pending units per Color -> Size (ordered by sizeSortOrder) -> Operation
   for (const order of sortedOrders) {
+    const sizeSortOrder: SizeSortOrder = order.sizeSortOrder ?? 'asc';
     const validOps = order.operations.filter((op) => op.minutesPerUnit > 0);
-    const validColors = order.colors.filter((c) => c.units > 0);
+    const validColors = order.colors.filter((c) => getColorTotalUnits(c) > 0);
     if (validOps.length === 0 || validColors.length === 0) {
       continue;
     }
@@ -651,128 +778,168 @@ export function buildProductionSchedule(
     let cursorDate = order.receivedDate;
 
     for (const color of validColors) {
-      for (let opIdx = 0; opIdx < validOps.length; opIdx += 1) {
-        const op = validOps[opIdx];
-        const isLastOpOfColor = opIdx === validOps.length - 1;
+      const colorTotalUnits = getColorTotalUnits(color);
+      const orderedSizes = getOrderedColorSizes(color, sizeSortOrder);
+      const isSingleUnicaSize =
+        orderedSizes.length === 1 && orderedSizes[0].size === 'Única';
 
-        const executedUnits = Math.min(
-          color.units,
-          getExecutedUnitsForOperation(order, color.id, op.operationId)
-        );
-        const pendingUnits = Math.max(
-          0,
-          Math.round((color.units - executedUnits) * 1000) / 1000
-        );
+      for (let sizeIdx = 0; sizeIdx < orderedSizes.length; sizeIdx += 1) {
+        const sizeItem = orderedSizes[sizeIdx];
+        const isLastSizeOfColor = sizeIdx === orderedSizes.length - 1;
 
-        for (const l of logs) {
-          if (
-            l.colorId === color.id &&
-            l.operationId === op.operationId &&
-            l.shiftRemainingToNextDay
-          ) {
-            const shiftedDate = addDaysIso(l.reportDate, 1);
-            if (shiftedDate > cursorDate) {
-              cursorDate = shiftedDate;
+        for (let opIdx = 0; opIdx < validOps.length; opIdx += 1) {
+          const op = validOps[opIdx];
+          const isLastOpOfSize = opIdx === validOps.length - 1;
+          const isLastOpOfColor = isLastSizeOfColor && isLastOpOfSize;
+
+          const executedUnits = Math.min(
+            sizeItem.units,
+            getExecutedUnitsForOperation(
+              order,
+              color.id,
+              op.operationId,
+              sizeItem.size
+            )
+          );
+          const pendingUnits = Math.max(
+            0,
+            Math.round((sizeItem.units - executedUnits) * 1000) / 1000
+          );
+
+          for (const l of logs) {
+            const matchesLogSize =
+              !l.size ||
+              l.size === sizeItem.size ||
+              orderedSizes.length === 1;
+            if (
+              l.colorId === color.id &&
+              l.operationId === op.operationId &&
+              matchesLogSize &&
+              l.shiftRemainingToNextDay
+            ) {
+              const shiftedDate = addDaysIso(l.reportDate, 1);
+              if (shiftedDate > cursorDate) {
+                cursorDate = shiftedDate;
+              }
             }
           }
-        }
 
-        if (pendingUnits <= 0.001) {
-          continue;
-        }
+          if (pendingUnits <= 0.001) {
+            continue;
+          }
 
-        let minutesLeftForOp = Math.round(pendingUnits * op.minutesPerUnit * 1000) / 1000;
+          let minutesLeftForOp =
+            Math.round(pendingUnits * op.minutesPerUnit * 1000) / 1000;
 
-        let safetyCounter = 0;
-        while (minutesLeftForOp > 0.001 && safetyCounter < 500) {
-          safetyCounter += 1;
-          const dayPlan = ensureDayPlan(cursorDate);
+          let safetyCounter = 0;
+          while (minutesLeftForOp > 0.001 && safetyCounter < 500) {
+            safetyCounter += 1;
+            const dayPlan = ensureDayPlan(cursorDate);
 
-          // Calculate how many minutes this order is allowed to use on cursorDate
-          let availableForOrderToday = dayPlan.remainingMinutes;
-          if (
-            dailyDeadlineQuota !== null &&
-            lastWorkingDateInWindow !== null &&
-            cursorDate < lastWorkingDateInWindow
-          ) {
-            const alreadyUsedTodayForOrder = orderPendingUsedByDate.get(cursorDate) ?? 0;
-            const remainingQuotaToday = Math.max(
-              0,
-              dailyDeadlineQuota - alreadyUsedTodayForOrder
+            // Calculate how many minutes this order is allowed to use on cursorDate
+            let availableForOrderToday = dayPlan.remainingMinutes;
+            if (
+              dailyDeadlineQuota !== null &&
+              lastWorkingDateInWindow !== null &&
+              cursorDate < lastWorkingDateInWindow
+            ) {
+              const alreadyUsedTodayForOrder =
+                orderPendingUsedByDate.get(cursorDate) ?? 0;
+              const remainingQuotaToday = Math.max(
+                0,
+                dailyDeadlineQuota - alreadyUsedTodayForOrder
+              );
+              availableForOrderToday = Math.min(
+                dayPlan.remainingMinutes,
+                remainingQuotaToday
+              );
+            }
+
+            if (!dayPlan.isWorkingDay || availableForOrderToday <= 0.001) {
+              const weeklyTotal = calculateWeeklyMinutes(config);
+              if (weeklyTotal <= 0 && !useByDeadlineMode) {
+                dayPlan.isWorkingDay = true;
+                dayPlan.capacityMinutes = 480;
+                dayPlan.remainingMinutes = 480;
+                availableForOrderToday = 480;
+              } else {
+                cursorDate = addDaysIso(cursorDate, 1);
+                continue;
+              }
+            }
+
+            const allocatedMinutes = Math.min(
+              availableForOrderToday,
+              minutesLeftForOp
             );
-            availableForOrderToday = Math.min(dayPlan.remainingMinutes, remainingQuotaToday);
-          }
+            const startUsed = dayPlan.usedMinutes;
+            const clocks = computeClocks(cursorDate, startUsed, allocatedMinutes);
 
-          if (!dayPlan.isWorkingDay || availableForOrderToday <= 0.001) {
-            const weeklyTotal = calculateWeeklyMinutes(config);
-            if (weeklyTotal <= 0 && !useByDeadlineMode) {
-              dayPlan.isWorkingDay = true;
-              dayPlan.capacityMinutes = 480;
-              dayPlan.remainingMinutes = 480;
-              availableForOrderToday = 480;
-            } else {
-              cursorDate = addDaysIso(cursorDate, 1);
-              continue;
-            }
-          }
+            minutesLeftForOp = Math.max(
+              0,
+              Math.round((minutesLeftForOp - allocatedMinutes) * 1000) / 1000
+            );
+            dayPlan.usedMinutes =
+              Math.round((dayPlan.usedMinutes + allocatedMinutes) * 100) / 100;
+            dayPlan.remainingMinutes = Math.max(
+              0,
+              Math.round((dayPlan.capacityMinutes - dayPlan.usedMinutes) * 100) /
+                100
+            );
+            orderPendingUsedByDate.set(
+              cursorDate,
+              (orderPendingUsedByDate.get(cursorDate) ?? 0) + allocatedMinutes
+            );
 
-          const allocatedMinutes = Math.min(availableForOrderToday, minutesLeftForOp);
-          const startUsed = dayPlan.usedMinutes;
-          const clocks = computeClocks(cursorDate, startUsed, allocatedMinutes);
+            const isOpDone = minutesLeftForOp <= 0.001;
+            const isSizeDone = isOpDone && isLastOpOfSize;
+            const isColorDone = isOpDone && isLastOpOfColor;
+            const unitsAssigned =
+              Math.round((allocatedMinutes / op.minutesPerUnit) * 10) / 10;
 
-          minutesLeftForOp = Math.max(
-            0,
-            Math.round((minutesLeftForOp - allocatedMinutes) * 1000) / 1000
-          );
-          dayPlan.usedMinutes = Math.round((dayPlan.usedMinutes + allocatedMinutes) * 100) / 100;
-          dayPlan.remainingMinutes = Math.max(
-            0,
-            Math.round((dayPlan.capacityMinutes - dayPlan.usedMinutes) * 100) / 100
-          );
-          orderPendingUsedByDate.set(
-            cursorDate,
-            (orderPendingUsedByDate.get(cursorDate) ?? 0) + allocatedMinutes
-          );
+            const taskKey = isSingleUnicaSize
+              ? `${order.id}__${color.id}__${op.operationId}__${cursorDate}`
+              : `${order.id}__${color.id}__${sizeItem.size}__${op.operationId}__${cursorDate}`;
 
-          const isOpDone = minutesLeftForOp <= 0.001;
-          const isColorDone = isOpDone && isLastOpOfColor;
-          const unitsAssigned = Math.round((allocatedMinutes / op.minutesPerUnit) * 10) / 10;
-
-          const block: ScheduledTaskBlock = {
-            taskKey: `${order.id}__${color.id}__${op.operationId}__${cursorDate}`,
-            date: cursorDate,
-            productionId: order.id,
-            garmentName: order.garmentName,
-            referenceCode: order.referenceCode,
-            colorId: color.id,
-            colorName: color.colorName,
-            colorHex: color.colorHex,
-            operationId: op.operationId,
-            operationName: op.operationName,
-            machine: op.machine,
-            unitsAssigned,
-            totalColorUnits: color.units,
-            minutesAssigned: Math.round(allocatedMinutes * 100) / 100,
-            startClock: clocks.startClock,
-            endClock: clocks.endClock,
-            isOperationCompletedInThisBlock: isOpDone,
-            isColorCompletedInThisBlock: isColorDone,
-            isAfterDeadline: cursorDate > order.deliveryDate,
-          };
-
-          dayPlan.blocks.push(block);
-
-          if (isColorDone) {
-            dayPlan.colorsEvacuated.push({
+            const block: ScheduledTaskBlock = {
+              taskKey,
+              date: cursorDate,
               productionId: order.id,
               garmentName: order.garmentName,
+              referenceCode: order.referenceCode,
               colorId: color.id,
               colorName: color.colorName,
               colorHex: color.colorHex,
-              totalUnits: color.units,
-            });
-            summaries[order.id].colorCompletionDates[color.id] = cursorDate;
-            summaries[order.id].estimatedCompletionDate = cursorDate;
+              size: sizeItem.size,
+              totalSizeUnits: sizeItem.units,
+              operationId: op.operationId,
+              operationName: op.operationName,
+              machine: op.machine,
+              unitsAssigned,
+              totalColorUnits: colorTotalUnits,
+              minutesAssigned: Math.round(allocatedMinutes * 100) / 100,
+              startClock: clocks.startClock,
+              endClock: clocks.endClock,
+              isOperationCompletedInThisBlock: isOpDone,
+              isSizeCompletedInThisBlock: isSizeDone,
+              isColorCompletedInThisBlock: isColorDone,
+              isAfterDeadline: cursorDate > order.deliveryDate,
+            };
+
+            dayPlan.blocks.push(block);
+
+            if (isColorDone) {
+              dayPlan.colorsEvacuated.push({
+                productionId: order.id,
+                garmentName: order.garmentName,
+                colorId: color.id,
+                colorName: color.colorName,
+                colorHex: color.colorHex,
+                totalUnits: colorTotalUnits,
+              });
+              summaries[order.id].colorCompletionDates[color.id] = cursorDate;
+              summaries[order.id].estimatedCompletionDate = cursorDate;
+            }
           }
         }
       }

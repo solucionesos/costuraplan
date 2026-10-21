@@ -10,6 +10,13 @@ export type MachineType =
 
 export type DeliveryMode = 'asap' | 'by-deadline';
 
+/**
+ * Orden de evacuación de tallas dentro de cada color:
+ * - 'asc': Ascendente (de menor a mayor, ej. Única, XS -> S -> M -> L -> XL)
+ * - 'desc': Descendente (de mayor a menor, ej. XL -> L -> M -> S -> XS, Única)
+ */
+export type SizeSortOrder = 'asc' | 'desc';
+
 export interface SewingOperation {
   id: string;
   name: string;
@@ -32,11 +39,17 @@ export interface WorkshopConfig {
   nonWorkingDates: string[]; // YYYY-MM-DD
 }
 
+export interface SizeBatch {
+  size: string; // Ej. "Única", "XS", "S", "M", "L", "XL", "XXL", "8", "10", etc.
+  units: number;
+}
+
 export interface ColorBatch {
   id: string;
   colorName: string;
   colorHex: string;
   units: number;
+  sizes?: SizeBatch[]; // Desglose por talla dentro del color (incluyendo "Única")
 }
 
 export interface ProductionOperationItem {
@@ -51,6 +64,7 @@ export interface ExecutionLog {
   reportDate: string; // YYYY-MM-DD (día real en que se ejecutó / reportó)
   scheduledSourceDate?: string; // YYYY-MM-DD (día original del bloque si fue adelantado)
   colorId: string;
+  size?: string; // Talla ejecutada (ej. "Única", "S", "M", "L")
   operationId: string;
   unitsExecuted: number;
   plannedUnitsAtReport?: number;
@@ -69,6 +83,10 @@ export interface ProductionOrder {
    * 'by-deadline': Fecha de Entrega (reparte las operaciones en todos los días hábiles del plazo aunque se trabaje menos horas por día)
    */
   deliveryMode?: DeliveryMode;
+  /**
+   * Orden de tallaje dentro de cada color: 'asc' (Ascendente) o 'desc' (Descendente)
+   */
+  sizeSortOrder?: SizeSortOrder;
   colors: ColorBatch[];
   operations: ProductionOperationItem[];
   completedTaskKeys: string[];
@@ -85,6 +103,8 @@ export interface ScheduledTaskBlock {
   colorId: string;
   colorName: string;
   colorHex: string;
+  size: string;
+  totalSizeUnits: number;
   operationId: string;
   operationName: string;
   machine: MachineType;
@@ -96,6 +116,7 @@ export interface ScheduledTaskBlock {
   startClock: string;
   endClock: string;
   isOperationCompletedInThisBlock: boolean;
+  isSizeCompletedInThisBlock?: boolean;
   isColorCompletedInThisBlock: boolean;
   isAfterDeadline: boolean;
   isExecutedReport?: boolean;
@@ -128,6 +149,7 @@ export interface DayPlan {
 export interface ProductionScheduleSummary {
   productionId: string;
   deliveryMode: DeliveryMode;
+  sizeSortOrder: SizeSortOrder;
   totalUnits: number;
   minutesPerUnit: number;
   totalRequiredMinutes: number;
