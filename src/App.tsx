@@ -128,6 +128,9 @@ export const App: React.FC = () => {
     }));
     setProductions(syncedOrders);
     saveProductions(syncedOrders);
+    triggerAutoRecalcFeedback(
+      'Catálogo y programación actualizados automáticamente'
+    );
   };
 
   const handleSaveWorkshop = (nextConfig: WorkshopConfig) => {
