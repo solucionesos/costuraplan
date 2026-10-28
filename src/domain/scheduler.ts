@@ -228,7 +228,7 @@ export function getExecutedUnitsForOperation(
   colorId: string,
   operationId: string,
   size?: string,
-  options?: { ignoreAdvances?: boolean }
+  options?: { ignoreAdvances?: boolean; referenceDate?: string }
 ): number {
   const logs = order.executionLogs ?? [];
   const color = order.colors.find((c) => c.id === colorId);
@@ -239,6 +239,13 @@ export function getExecutedUnitsForOperation(
 
   return logs
     .filter((l) => {
+      // Si hay referenceDate, ningún reporte con fecha futura debe contarse como ejecutado
+      if (
+        options?.referenceDate &&
+        l.reportDate > options.referenceDate
+      ) {
+        return false;
+      }
       if (
         options?.ignoreAdvances &&
         l.scheduledSourceDate &&
@@ -256,13 +263,23 @@ export function getExecutedUnitsForOperation(
 }
 
 export function cleanAdvancedWorkFromOrders(
-  orders: ProductionOrder[]
+  orders: ProductionOrder[],
+  referenceDate?: string
 ): ProductionOrder[] {
   return orders.map((order) => ({
     ...order,
-    executionLogs: (order.executionLogs ?? []).filter(
-      (l) => !(l.scheduledSourceDate && l.scheduledSourceDate > l.reportDate)
-    ),
+    completedTaskKeys: [],
+    executionLogs: (order.executionLogs ?? []).filter((l) => {
+      // 1. Eliminar labores adelantadas antes de su fecha programada
+      if (l.scheduledSourceDate && l.scheduledSourceDate > l.reportDate) {
+        return false;
+      }
+      // 2. Si se proporciona referenceDate (hoy), eliminar reportes en días futuros
+      if (referenceDate && l.reportDate > referenceDate) {
+        return false;
+      }
+      return true;
+    }),
   }));
 }
 
@@ -466,7 +483,8 @@ export function removeExecutionLog(
 
 export function evaluateProductionSummary(
   order: ProductionOrder,
-  config: WorkshopConfig
+  config: WorkshopConfig,
+  options?: { referenceDate?: string }
 ): ProductionScheduleSummary {
   const deliveryMode: DeliveryMode = order.deliveryMode ?? 'asap';
   const sizeSortOrder: SizeSortOrder = order.sizeSortOrder ?? 'asc';
@@ -486,7 +504,9 @@ export function evaluateProductionSummary(
     for (const op of order.operations) {
       const doneUnits = Math.min(
         colorUnits,
-        getExecutedUnitsForOperation(order, color.id, op.operationId)
+        getExecutedUnitsForOperation(order, color.id, op.operationId, undefined, {
+          referenceDate: options?.referenceDate,
+        })
       );
       executedMinutes += doneUnits * op.minutesPerUnit;
     }
@@ -572,7 +592,9 @@ export function buildProductionSchedule(
 
   const summaries: Record<string, ProductionScheduleSummary> = {};
   for (const order of sortedOrders) {
-    summaries[order.id] = evaluateProductionSummary(order, config);
+    summaries[order.id] = evaluateProductionSummary(order, config, {
+      referenceDate: options.referenceDate,
+    });
   }
 
   if (sortedOrders.length === 0) {
@@ -650,6 +672,9 @@ export function buildProductionSchedule(
     const rawLogs = order.executionLogs ?? [];
     const logs = [...rawLogs]
       .filter((l) => {
+        if (options.referenceDate && l.reportDate > options.referenceDate) {
+          return false;
+        }
         if (
           options.ignoreAdvances &&
           l.scheduledSourceDate &&
@@ -716,7 +741,12 @@ export function buildProductionSchedule(
           const totalForCandidate = getExecutedUnitsForOperation(
             order,
             color.id,
-            candidateOp.operationId
+            candidateOp.operationId,
+            undefined,
+            {
+              ignoreAdvances: options.ignoreAdvances,
+              referenceDate: options.referenceDate,
+            }
           );
           return totalForCandidate >= colorTotalUnits - 0.001;
         });
@@ -875,7 +905,10 @@ export function buildProductionSchedule(
               color.id,
               op.operationId,
               sizeItem.size,
-              { ignoreAdvances: options.ignoreAdvances }
+              {
+                ignoreAdvances: options.ignoreAdvances,
+                referenceDate: options.referenceDate,
+              }
             )
           );
           const pendingUnits = Math.max(

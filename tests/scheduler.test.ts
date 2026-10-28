@@ -769,4 +769,58 @@ describe('Color-Batch Evacuation & Dynamic Re-Scheduling Engine', () => {
       .reduce((sum, b) => sum + b.unitsAssigned, 0);
     expect(totalIgnored).toBe(100);
   });
+
+  it('guarantees tomorrow starts clean at 07:00 and removes future execution logs on recalculation', () => {
+    const today = '2026-10-19';
+    const tomorrow = '2026-10-20';
+    const sample = createSampleProductionOrder(today, '2026-10-23');
+
+    // Simulate user having execution logs on tomorrow (e.g., 3 tasks marked as executed on tomorrow)
+    const orderWithFutureLogs: ProductionOrder = {
+      ...sample,
+      completedTaskKeys: ['exec__future-1'],
+      executionLogs: [
+        {
+          id: 'future-1',
+          reportDate: tomorrow,
+          scheduledSourceDate: tomorrow,
+          colorId: sample.colors[0].id,
+          operationId: sample.operations[0].operationId,
+          unitsExecuted: 10,
+          shiftRemainingToNextDay: false,
+          createdAt: '2026-10-19T10:00:00Z',
+        },
+        {
+          id: 'future-2',
+          reportDate: tomorrow,
+          scheduledSourceDate: tomorrow,
+          colorId: sample.colors[0].id,
+          operationId: sample.operations[1].operationId,
+          unitsExecuted: 10,
+          shiftRemainingToNextDay: false,
+          createdAt: '2026-10-19T10:00:00Z',
+        },
+      ],
+    };
+
+    // 1. When scheduling with referenceDate = today, future day (tomorrow) must NOT have execution logs placed on it
+    const schedule = buildProductionSchedule(
+      [orderWithFutureLogs],
+      DEFAULT_WORKSHOP_CONFIG,
+      { referenceDate: today }
+    );
+
+    const tomorrowPlan = schedule.days.find((d) => d.date === tomorrow);
+    expect(tomorrowPlan).toBeDefined();
+    // First block on tomorrow must start at 07:00
+    expect(tomorrowPlan!.blocks.length).toBeGreaterThan(0);
+    expect(tomorrowPlan!.blocks[0].startClock).toBe('07:00');
+    // None of the blocks on tomorrow should be an executed report
+    expect(tomorrowPlan!.blocks.some((b) => b.isExecutedReport)).toBe(false);
+
+    // 2. cleanAdvancedWorkFromOrders with referenceDate removes future execution logs and resets completedTaskKeys
+    const cleaned = cleanAdvancedWorkFromOrders([orderWithFutureLogs], today);
+    expect(cleaned[0].executionLogs).toHaveLength(0);
+    expect(cleaned[0].completedTaskKeys).toEqual([]);
+  });
 });

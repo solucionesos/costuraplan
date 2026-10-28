@@ -11,6 +11,7 @@ import {
   CheckCircle2,
 } from 'lucide-react';
 import {
+  getTodayIso,
   loadOperations,
   loadProductions,
   loadWorkshopConfig,
@@ -188,7 +189,8 @@ export const App: React.FC = () => {
 
   const handleRecalculateSchedule = () => {
     // Recalcular la programación completa incluyendo el día actual y descartando cualquier trabajo adelantado
-    const cleanedOrders = cleanAdvancedWorkFromOrders(productions);
+    const today = getTodayIso();
+    const cleanedOrders = cleanAdvancedWorkFromOrders(productions, today);
     setProductions(cleanedOrders);
     saveProductions(cleanedOrders);
     triggerAutoRecalcFeedback(

@@ -155,7 +155,9 @@ export const CalendarPlanView: React.FC<CalendarPlanViewProps> = ({
     defaultReportDate?: string
   ) => {
     setReportingBlock(block);
-    setReportDateInput(defaultReportDate ?? block.date);
+    const initialReportDate =
+      defaultReportDate ?? (block.date > todayIso ? todayIso : block.date);
+    setReportDateInput(initialReportDate);
     setUnitsExecutedInput(String(block.unitsAssigned));
     setIsAdvancePickerOpen(false);
   };

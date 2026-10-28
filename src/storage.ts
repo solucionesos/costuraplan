@@ -3,7 +3,7 @@ import {
   DEFAULT_OPERATIONS,
   DEFAULT_WORKSHOP_CONFIG,
 } from './domain/defaults';
-import { addDaysIso, formatIsoDateUTC } from './domain/scheduler';
+import { addDaysIso } from './domain/scheduler';
 import { ProductionOrder, SewingOperation, WorkshopConfig } from './domain/types';
 
 const KEYS = {
@@ -13,7 +13,11 @@ const KEYS = {
 };
 
 export function getTodayIso(): string {
-  return formatIsoDateUTC(new Date());
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }
 
 export function loadOperations(): SewingOperation[] {
