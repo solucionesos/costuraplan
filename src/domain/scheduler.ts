@@ -227,7 +227,8 @@ export function getExecutedUnitsForOperation(
   order: ProductionOrder,
   colorId: string,
   operationId: string,
-  size?: string
+  size?: string,
+  options?: { ignoreAdvances?: boolean }
 ): number {
   const logs = order.executionLogs ?? [];
   const color = order.colors.find((c) => c.id === colorId);
@@ -238,6 +239,13 @@ export function getExecutedUnitsForOperation(
 
   return logs
     .filter((l) => {
+      if (
+        options?.ignoreAdvances &&
+        l.scheduledSourceDate &&
+        l.scheduledSourceDate > l.reportDate
+      ) {
+        return false;
+      }
       if (l.colorId !== colorId || l.operationId !== operationId) return false;
       if (!size) return true;
       if (l.size === size) return true;
@@ -245,6 +253,17 @@ export function getExecutedUnitsForOperation(
       return false;
     })
     .reduce((sum, l) => sum + Math.max(0, l.unitsExecuted), 0);
+}
+
+export function cleanAdvancedWorkFromOrders(
+  orders: ProductionOrder[]
+): ProductionOrder[] {
+  return orders.map((order) => ({
+    ...order,
+    executionLogs: (order.executionLogs ?? []).filter(
+      (l) => !(l.scheduledSourceDate && l.scheduledSourceDate > l.reportDate)
+    ),
+  }));
 }
 
 export type ReportNoveltyType = 'shortfall' | 'advance' | 'overproduction' | 'exact';
@@ -530,6 +549,11 @@ export interface ScheduleOptions {
    * se trasladan automáticamente a partir de esta fecha.
    */
   referenceDate?: string;
+  /**
+   * Si es true, descarta cualquier labor adelantada (scheduledSourceDate > reportDate)
+   * y programa cada día limpio como si no se hubiera adelantado nada.
+   */
+  ignoreAdvances?: boolean;
 }
 
 export function buildProductionSchedule(
@@ -623,9 +647,19 @@ export function buildProductionSchedule(
   // STEP 1: Place all actual reported ExecutionLogs on their reportDate first
   for (const order of sortedOrders) {
     const sizeSortOrder: SizeSortOrder = order.sizeSortOrder ?? 'asc';
-    const logs = [...(order.executionLogs ?? [])].sort((a, b) =>
-      a.reportDate.localeCompare(b.reportDate)
-    );
+    const rawLogs = order.executionLogs ?? [];
+    const logs = [...rawLogs]
+      .filter((l) => {
+        if (
+          options.ignoreAdvances &&
+          l.scheduledSourceDate &&
+          l.scheduledSourceDate > l.reportDate
+        ) {
+          return false;
+        }
+        return true;
+      })
+      .sort((a, b) => a.reportDate.localeCompare(b.reportDate));
 
     const runningUnitsByKey = new Map<string, number>();
 
@@ -746,7 +780,12 @@ export function buildProductionSchedule(
     }
 
     const summary = summaries[order.id];
-    const logs = order.executionLogs ?? [];
+    const rawLogs = order.executionLogs ?? [];
+    const logs = options.ignoreAdvances
+      ? rawLogs.filter(
+          (l) => !(l.scheduledSourceDate && l.scheduledSourceDate > l.reportDate)
+        )
+      : rawLogs;
     const isFitDeadlineMode = mode === 'fit-deadline';
     const isByDeadlineOrder = order.deliveryMode === 'by-deadline';
     const useByDeadlineMode = isFitDeadlineMode || isByDeadlineOrder;
@@ -835,7 +874,8 @@ export function buildProductionSchedule(
               order,
               color.id,
               op.operationId,
-              sizeItem.size
+              sizeItem.size,
+              { ignoreAdvances: options.ignoreAdvances }
             )
           );
           const pendingUnits = Math.max(

@@ -5,6 +5,7 @@ import {
   buildProductionSchedule,
   calculateDayAvailableMinutes,
   calculateWeeklyMinutes,
+  cleanAdvancedWorkFromOrders,
   evaluateProductionSummary,
   formatDurationHuman,
   formatIsoDateUTC,
@@ -720,5 +721,52 @@ describe('Color-Batch Evacuation & Dynamic Re-Scheduling Engine', () => {
     expect(totalMedUnits).toBe(40);
     // Complete by deadline
     expect(resMed.summaries['ord-med-deadline'].estimatedCompletionDate! <= '2026-10-23').toBe(true);
+  });
+
+  it('cleans advanced work and recalculates schedule from today as if nothing was advanced', () => {
+    // Start with sampleOrder and add an advance log (reported on 2026-10-19 for scheduled 2026-10-21)
+    const orderWithAdvance = applyExecutionReportToOrder(sampleOrder, {
+      reportDate: '2026-10-19',
+      scheduledSourceDate: '2026-10-21',
+      colorId: 'c-rojo',
+      operationId: 'op-b',
+      unitsExecuted: 50,
+      plannedUnitsOnBlock: 40,
+    });
+
+    expect(orderWithAdvance.executionLogs).toHaveLength(1);
+    expect(orderWithAdvance.executionLogs![0].scheduledSourceDate).toBe('2026-10-21');
+
+    // cleanAdvancedWorkFromOrders should remove the advance log
+    const cleanedOrders = cleanAdvancedWorkFromOrders([orderWithAdvance]);
+    expect(cleanedOrders[0].executionLogs).toHaveLength(0);
+
+    // When recalculating with ignoreAdvances or cleaned orders, rojo op-b has full 100 pending units
+    const freshSchedule = buildProductionSchedule(cleanedOrders, DEFAULT_WORKSHOP_CONFIG, {
+      referenceDate: '2026-10-19',
+    });
+
+    const totalRojoOpB = freshSchedule.days
+      .flatMap((d) => d.blocks)
+      .filter((b) => b.colorId === 'c-rojo' && b.operationId === 'op-b')
+      .reduce((sum, b) => sum + b.unitsAssigned, 0);
+
+    // Full 100 units scheduled without any advance deduction
+    expect(totalRojoOpB).toBe(100);
+
+    // Testing option ignoreAdvances: true directly
+    const directIgnoredSchedule = buildProductionSchedule(
+      [orderWithAdvance],
+      DEFAULT_WORKSHOP_CONFIG,
+      {
+        referenceDate: '2026-10-19',
+        ignoreAdvances: true,
+      }
+    );
+    const totalIgnored = directIgnoredSchedule.days
+      .flatMap((d) => d.blocks)
+      .filter((b) => b.colorId === 'c-rojo' && b.operationId === 'op-b')
+      .reduce((sum, b) => sum + b.unitsAssigned, 0);
+    expect(totalIgnored).toBe(100);
   });
 });

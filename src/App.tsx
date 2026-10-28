@@ -25,6 +25,7 @@ import {
 } from './domain/types';
 import {
   applyExecutionReportToOrder,
+  cleanAdvancedWorkFromOrders,
   removeExecutionLog,
 } from './domain/scheduler';
 import { OperationsView } from './components/OperationsView';
@@ -185,6 +186,16 @@ export const App: React.FC = () => {
     handleSaveProductions(updated);
   };
 
+  const handleRecalculateSchedule = () => {
+    // Recalcular la programación completa incluyendo el día actual y descartando cualquier trabajo adelantado
+    const cleanedOrders = cleanAdvancedWorkFromOrders(productions);
+    setProductions(cleanedOrders);
+    saveProductions(cleanedOrders);
+    triggerAutoRecalcFeedback(
+      'Programación recalculada desde hoy: labores adelantadas reiniciadas y días programados limpios'
+    );
+  };
+
   return (
     <div className="min-h-screen w-full max-w-2xl mx-auto bg-[#f5f2f0] text-[#2e1f14] flex flex-col border-x border-stone-300/80 shadow-sm">
       {/* Top Corporate App Bar (#51344D Soluciones Open Source) */}
@@ -257,6 +268,7 @@ export const App: React.FC = () => {
             onToggleTaskComplete={handleToggleTaskComplete}
             onSubmitExecutionReport={handleSubmitExecutionReport}
             onRemoveExecutionLog={handleRemoveExecutionLog}
+            onRecalculateSchedule={handleRecalculateSchedule}
           />
         )}
 
