@@ -640,4 +640,85 @@ describe('Color-Batch Evacuation & Dynamic Re-Scheduling Engine', () => {
     expect(allBlocks[0].unitsAssigned).toBe(78); // ceil(540 / 7) = 78
     expect(allBlocks[1].unitsAssigned).toBe(22); // 100 - 78 = 22
   });
+
+  it('automatically shifts unexecuted operations from past days forward to referenceDate (today)', () => {
+    // Order received on 2026-10-15 (in the past), with no execution logs
+    const pastOrder: ProductionOrder = {
+      ...sampleOrder,
+      id: 'ord-past',
+      receivedDate: '2026-10-15',
+      deliveryDate: '2026-10-25',
+    };
+
+    // When referenceDate is 2026-10-20, all unexecuted operations must be scheduled on or after 2026-10-20
+    const scheduleWithToday = buildProductionSchedule([pastOrder], DEFAULT_WORKSHOP_CONFIG, {
+      referenceDate: '2026-10-20',
+    });
+
+    const datesWithBlocks = scheduleWithToday.days
+      .filter((d) => d.blocks.length > 0)
+      .map((d) => d.date);
+
+    for (const dt of datesWithBlocks) {
+      expect(dt >= '2026-10-20').toBe(true);
+    }
+  });
+
+  it('avoids atomization in by-deadline mode with small orders and strictly respects workshop capacity', () => {
+    // Order with only 60 total minutes across 5 days: should not be fragmented into 12 min/day!
+    const tinyByDeadlineOrder: ProductionOrder = {
+      ...sampleOrder,
+      id: 'ord-tiny-deadline',
+      deliveryMode: 'by-deadline',
+      colors: [{ id: 'c-1', colorName: 'Azul', colorHex: '#000', units: 10 }],
+      operations: [
+        {
+          operationId: 'op-6min',
+          operationName: 'Op 6 min',
+          machine: 'Plana',
+          minutesPerUnit: 6,
+        },
+      ],
+      receivedDate: '2026-10-19',
+      deliveryDate: '2026-10-23',
+    };
+
+    const res = buildProductionSchedule([tinyByDeadlineOrder], DEFAULT_WORKSHOP_CONFIG);
+    const scheduledDays = res.days.filter((d) => d.blocks.length > 0);
+    // Should be completed in 1 single day of 60 min rather than split across 5 tiny days
+    expect(scheduledDays.length).toBe(1);
+    expect(scheduledDays[0].blocks[0].unitsAssigned).toBe(10);
+    expect(scheduledDays[0].usedMinutes).toBe(60);
+
+    // Medium order: 200 min across 5 days (avg 40 min < 60 min floor -> floor 60 min/day applies)
+    const mediumByDeadlineOrder: ProductionOrder = {
+      ...sampleOrder,
+      id: 'ord-med-deadline',
+      deliveryMode: 'by-deadline',
+      colors: [{ id: 'c-1', colorName: 'Azul', colorHex: '#000', units: 40 }],
+      operations: [
+        {
+          operationId: 'op-5min',
+          operationName: 'Op 5 min',
+          machine: 'Plana',
+          minutesPerUnit: 5,
+        },
+      ],
+      receivedDate: '2026-10-19',
+      deliveryDate: '2026-10-23',
+    };
+
+    const resMed = buildProductionSchedule([mediumByDeadlineOrder], DEFAULT_WORKSHOP_CONFIG);
+    for (const d of resMed.days) {
+      // Must never exceed the day's capacity
+      expect(d.usedMinutes).toBeLessThanOrEqual(d.capacityMinutes);
+    }
+    // Total scheduled units must equal total order units
+    const totalMedUnits = resMed.days
+      .flatMap((d) => d.blocks)
+      .reduce((s, b) => s + b.unitsAssigned, 0);
+    expect(totalMedUnits).toBe(40);
+    // Complete by deadline
+    expect(resMed.summaries['ord-med-deadline'].estimatedCompletionDate! <= '2026-10-23').toBe(true);
+  });
 });

@@ -87,8 +87,9 @@ export const CalendarPlanView: React.FC<CalendarPlanViewProps> = ({
     () =>
       buildProductionSchedule(filteredOrders, workshopConfig, {
         mode: scheduleMode,
+        referenceDate: todayIso,
       }),
-    [filteredOrders, workshopConfig, scheduleMode]
+    [filteredOrders, workshopConfig, scheduleMode, todayIso]
   );
 
   // Split past days (< todayIso) vs current/upcoming days (>= todayIso)
