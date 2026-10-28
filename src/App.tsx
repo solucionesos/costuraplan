@@ -188,13 +188,13 @@ export const App: React.FC = () => {
   };
 
   const handleRecalculateSchedule = () => {
-    // Recalcular la programación completa incluyendo el día actual y descartando cualquier trabajo adelantado
+    // Trasladar labores adelantadas a la fecha en que se ejecutaron y recalcular la programación
     const today = getTodayIso();
-    const cleanedOrders = cleanAdvancedWorkFromOrders(productions, today);
-    setProductions(cleanedOrders);
-    saveProductions(cleanedOrders);
+    const updatedOrders = cleanAdvancedWorkFromOrders(productions, today);
+    setProductions(updatedOrders);
+    saveProductions(updatedOrders);
     triggerAutoRecalcFeedback(
-      'Programación recalculada desde hoy: labores adelantadas reiniciadas y días programados limpios'
+      'Programación recalculada: labores adelantadas trasladadas al día en que se ejecutaron y días futuros liberados desde las 07:00 AM'
     );
   };
 

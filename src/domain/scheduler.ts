@@ -239,13 +239,6 @@ export function getExecutedUnitsForOperation(
 
   return logs
     .filter((l) => {
-      // Si hay referenceDate, ningún reporte con fecha futura debe contarse como ejecutado
-      if (
-        options?.referenceDate &&
-        l.reportDate > options.referenceDate
-      ) {
-        return false;
-      }
       if (
         options?.ignoreAdvances &&
         l.scheduledSourceDate &&
@@ -262,25 +255,33 @@ export function getExecutedUnitsForOperation(
     .reduce((sum, l) => sum + Math.max(0, l.unitsExecuted), 0);
 }
 
-export function cleanAdvancedWorkFromOrders(
+export function transferAdvancedWorkToExecutionDate(
   orders: ProductionOrder[],
   referenceDate?: string
 ): ProductionOrder[] {
   return orders.map((order) => ({
     ...order,
-    completedTaskKeys: [],
-    executionLogs: (order.executionLogs ?? []).filter((l) => {
-      // 1. Eliminar labores adelantadas antes de su fecha programada
-      if (l.scheduledSourceDate && l.scheduledSourceDate > l.reportDate) {
-        return false;
-      }
-      // 2. Si se proporciona referenceDate (hoy), eliminar reportes en días futuros
+    executionLogs: (order.executionLogs ?? []).map((l) => {
+      // Si el reporte se guardó con fecha futura (p.ej. mañana),
+      // se traslada a la fecha en que realmente se ejecutó (referenceDate / hoy),
+      // conservando la fecha para la cual estaba programada originalmente (scheduledSourceDate)
       if (referenceDate && l.reportDate > referenceDate) {
-        return false;
+        return {
+          ...l,
+          scheduledSourceDate: l.scheduledSourceDate || l.reportDate,
+          reportDate: referenceDate,
+        };
       }
-      return true;
+      return l;
     }),
   }));
+}
+
+export function cleanAdvancedWorkFromOrders(
+  orders: ProductionOrder[],
+  referenceDate?: string
+): ProductionOrder[] {
+  return transferAdvancedWorkToExecutionDate(orders, referenceDate);
 }
 
 export type ReportNoveltyType = 'shortfall' | 'advance' | 'overproduction' | 'exact';
@@ -671,10 +672,20 @@ export function buildProductionSchedule(
     const sizeSortOrder: SizeSortOrder = order.sizeSortOrder ?? 'asc';
     const rawLogs = order.executionLogs ?? [];
     const logs = [...rawLogs]
-      .filter((l) => {
+      .map((l) => {
+        // Si el reporte se registró con fecha futura respecto a referenceDate,
+        // no se elimina: se traslada a la fecha en que se ejecutó (referenceDate),
+        // registrando que provino de una fecha programada posterior (scheduledSourceDate)
         if (options.referenceDate && l.reportDate > options.referenceDate) {
-          return false;
+          return {
+            ...l,
+            scheduledSourceDate: l.scheduledSourceDate || l.reportDate,
+            reportDate: options.referenceDate,
+          };
         }
+        return l;
+      })
+      .filter((l) => {
         if (
           options.ignoreAdvances &&
           l.scheduledSourceDate &&

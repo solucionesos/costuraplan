@@ -265,10 +265,10 @@ export const CalendarPlanView: React.FC<CalendarPlanViewProps> = ({
             type="button"
             onClick={onRecalculateSchedule}
             className="w-full inline-flex items-center justify-center gap-2 bg-[#E17726] hover:bg-[#c86419] text-white py-2 px-3.5 rounded-xl text-xs font-bold shadow-sm active:scale-95 transition"
-            title="Recalcular la programación completa incluyendo el día actual y reiniciando cualquier labor adelantada"
+            title="Recalcular la programación completa manteniendo las labores adelantadas en el día que se ejecutaron y liberando los días futuros"
           >
             <RotateCcw className="w-3.5 h-3.5 shrink-0" />
-            <span>Recalcular Programación (Incluyendo Hoy • Sin Adelantos)</span>
+            <span>Recalcular Programación (Trasladar Adelantos al Día Ejecutado)</span>
           </button>
         </div>
       </div>

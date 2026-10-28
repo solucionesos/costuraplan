@@ -737,24 +737,33 @@ describe('Color-Batch Evacuation & Dynamic Re-Scheduling Engine', () => {
     expect(orderWithAdvance.executionLogs).toHaveLength(1);
     expect(orderWithAdvance.executionLogs![0].scheduledSourceDate).toBe('2026-10-21');
 
-    // cleanAdvancedWorkFromOrders should remove the advance log
-    const cleanedOrders = cleanAdvancedWorkFromOrders([orderWithAdvance]);
-    expect(cleanedOrders[0].executionLogs).toHaveLength(0);
+    // cleanAdvancedWorkFromOrders / transferAdvancedWorkToExecutionDate does not delete the advance log;
+    // it transfers it to the date it was executed (today: 2026-10-19)
+    const transferredOrders = cleanAdvancedWorkFromOrders([orderWithAdvance], '2026-10-19');
+    expect(transferredOrders[0].executionLogs).toHaveLength(1);
+    expect(transferredOrders[0].executionLogs![0].reportDate).toBe('2026-10-19');
+    expect(transferredOrders[0].executionLogs![0].scheduledSourceDate).toBe('2026-10-21');
 
-    // When recalculating with ignoreAdvances or cleaned orders, rojo op-b has full 100 pending units
-    const freshSchedule = buildProductionSchedule(cleanedOrders, DEFAULT_WORKSHOP_CONFIG, {
+    // On today (2026-10-19), the advance block is placed as executed advance
+    const transferredSchedule = buildProductionSchedule(transferredOrders, DEFAULT_WORKSHOP_CONFIG, {
       referenceDate: '2026-10-19',
     });
 
-    const totalRojoOpB = freshSchedule.days
+    const todayPlan = transferredSchedule.days.find((d) => d.date === '2026-10-19');
+    expect(todayPlan).toBeDefined();
+    const advanceBlockOnToday = todayPlan!.blocks.find((b) => b.isAdvanceFromFuture);
+    expect(advanceBlockOnToday).toBeDefined();
+    expect(advanceBlockOnToday!.unitsExecuted).toBe(50);
+
+    // On the scheduled day (2026-10-21), only the remaining 50 units are scheduled
+    const totalRojoOpB = transferredSchedule.days
       .flatMap((d) => d.blocks)
-      .filter((b) => b.colorId === 'c-rojo' && b.operationId === 'op-b')
+      .filter((b) => b.colorId === 'c-rojo' && b.operationId === 'op-b' && !b.isExecutedReport)
       .reduce((sum, b) => sum + b.unitsAssigned, 0);
 
-    // Full 100 units scheduled without any advance deduction
-    expect(totalRojoOpB).toBe(100);
+    expect(totalRojoOpB).toBe(50);
 
-    // Testing option ignoreAdvances: true directly
+    // Testing option ignoreAdvances: true directly if needed
     const directIgnoredSchedule = buildProductionSchedule(
       [orderWithAdvance],
       DEFAULT_WORKSHOP_CONFIG,
@@ -770,12 +779,12 @@ describe('Color-Batch Evacuation & Dynamic Re-Scheduling Engine', () => {
     expect(totalIgnored).toBe(100);
   });
 
-  it('guarantees tomorrow starts clean at 07:00 and removes future execution logs on recalculation', () => {
+  it('guarantees tomorrow starts clean at 07:00 and transfers advanced work to execution date without deleting it', () => {
     const today = '2026-10-19';
     const tomorrow = '2026-10-20';
     const sample = createSampleProductionOrder(today, '2026-10-23');
 
-    // Simulate user having execution logs on tomorrow (e.g., 3 tasks marked as executed on tomorrow)
+    // Simulate user having execution logs reported on tomorrow
     const orderWithFutureLogs: ProductionOrder = {
       ...sample,
       completedTaskKeys: ['exec__future-1'],
@@ -803,24 +812,34 @@ describe('Color-Batch Evacuation & Dynamic Re-Scheduling Engine', () => {
       ],
     };
 
-    // 1. When scheduling with referenceDate = today, future day (tomorrow) must NOT have execution logs placed on it
+    // 1. In schedule with referenceDate = today:
+    // Future execution logs are transferred to today (the execution date)
     const schedule = buildProductionSchedule(
       [orderWithFutureLogs],
       DEFAULT_WORKSHOP_CONFIG,
       { referenceDate: today }
     );
 
+    // On today: the 2 advance blocks are placed and marked as executed advances
+    const todayPlan = schedule.days.find((d) => d.date === today);
+    expect(todayPlan).toBeDefined();
+    const todayAdvanceBlocks = todayPlan!.blocks.filter((b) => b.isExecutedReport);
+    expect(todayAdvanceBlocks.length).toBe(2);
+
+    // On tomorrow: tomorrow has NO executed reports, starts clean at 07:00
     const tomorrowPlan = schedule.days.find((d) => d.date === tomorrow);
     expect(tomorrowPlan).toBeDefined();
-    // First block on tomorrow must start at 07:00
     expect(tomorrowPlan!.blocks.length).toBeGreaterThan(0);
     expect(tomorrowPlan!.blocks[0].startClock).toBe('07:00');
-    // None of the blocks on tomorrow should be an executed report
     expect(tomorrowPlan!.blocks.some((b) => b.isExecutedReport)).toBe(false);
 
-    // 2. cleanAdvancedWorkFromOrders with referenceDate removes future execution logs and resets completedTaskKeys
-    const cleaned = cleanAdvancedWorkFromOrders([orderWithFutureLogs], today);
-    expect(cleaned[0].executionLogs).toHaveLength(0);
-    expect(cleaned[0].completedTaskKeys).toEqual([]);
+    // 2. cleanAdvancedWorkFromOrders / transferAdvancedWorkToExecutionDate:
+    // Transfers logs to today without deleting them
+    const transferred = cleanAdvancedWorkFromOrders([orderWithFutureLogs], today);
+    expect(transferred[0].executionLogs).toHaveLength(2);
+    expect(transferred[0].executionLogs![0].reportDate).toBe(today);
+    expect(transferred[0].executionLogs![0].scheduledSourceDate).toBe(tomorrow);
+    expect(transferred[0].executionLogs![1].reportDate).toBe(today);
+    expect(transferred[0].executionLogs![1].scheduledSourceDate).toBe(tomorrow);
   });
 });
