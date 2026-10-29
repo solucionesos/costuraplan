@@ -133,13 +133,13 @@ export const DEFAULT_OPERATIONS: SewingOperation[] = [
 
 export const DEFAULT_WORKSHOP_CONFIG: WorkshopConfig = {
   days: [
-    { dayOfWeek: 1, name: 'Lunes', enabled: true, startTime: '07:00', endTime: '17:00', breakMinutes: 60 },
-    { dayOfWeek: 2, name: 'Martes', enabled: true, startTime: '07:00', endTime: '17:00', breakMinutes: 60 },
-    { dayOfWeek: 3, name: 'Miércoles', enabled: true, startTime: '07:00', endTime: '17:00', breakMinutes: 60 },
-    { dayOfWeek: 4, name: 'Jueves', enabled: true, startTime: '07:00', endTime: '17:00', breakMinutes: 60 },
-    { dayOfWeek: 5, name: 'Viernes', enabled: true, startTime: '07:00', endTime: '17:00', breakMinutes: 60 },
-    { dayOfWeek: 6, name: 'Sábado', enabled: true, startTime: '07:00', endTime: '13:00', breakMinutes: 0 },
-    { dayOfWeek: 0, name: 'Domingo', enabled: false, startTime: '08:00', endTime: '12:00', breakMinutes: 0 },
+    { dayOfWeek: 1, name: 'Lunes', enabled: true, startTime: '07:00', endTime: '17:00', breakStartTime: '12:00', breakMinutes: 60 },
+    { dayOfWeek: 2, name: 'Martes', enabled: true, startTime: '07:00', endTime: '17:00', breakStartTime: '12:00', breakMinutes: 60 },
+    { dayOfWeek: 3, name: 'Miércoles', enabled: true, startTime: '07:00', endTime: '17:00', breakStartTime: '12:00', breakMinutes: 60 },
+    { dayOfWeek: 4, name: 'Jueves', enabled: true, startTime: '07:00', endTime: '17:00', breakStartTime: '12:00', breakMinutes: 60 },
+    { dayOfWeek: 5, name: 'Viernes', enabled: true, startTime: '07:00', endTime: '17:00', breakStartTime: '12:00', breakMinutes: 60 },
+    { dayOfWeek: 6, name: 'Sábado', enabled: true, startTime: '07:00', endTime: '13:00', breakStartTime: '12:00', breakMinutes: 0 },
+    { dayOfWeek: 0, name: 'Domingo', enabled: false, startTime: '08:00', endTime: '12:00', breakStartTime: '12:00', breakMinutes: 0 },
   ],
   nonWorkingDates: [],
 };

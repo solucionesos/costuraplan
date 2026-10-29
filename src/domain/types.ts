@@ -31,6 +31,7 @@ export interface DaySchedule {
   enabled: boolean;
   startTime: string; // HH:MM (ej. "07:00")
   endTime: string;   // HH:MM (ej. "17:00")
+  breakStartTime?: string; // HH:MM (ej. "12:00") - Hora de inicio de almuerzo
   breakMinutes: number; // Minutos de almuerzo/pausa
 }
 

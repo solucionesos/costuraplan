@@ -6,6 +6,7 @@ import {
   calculateDayAvailableMinutes,
   calculateWeeklyMinutes,
   cleanAdvancedWorkFromOrders,
+  computeTaskClockRange,
   evaluateProductionSummary,
   formatDurationHuman,
   formatIsoDateUTC,
@@ -841,5 +842,77 @@ describe('Color-Batch Evacuation & Dynamic Re-Scheduling Engine', () => {
     expect(transferred[0].executionLogs![0].scheduledSourceDate).toBe(tomorrow);
     expect(transferred[0].executionLogs![1].reportDate).toBe(today);
     expect(transferred[0].executionLogs![1].scheduledSourceDate).toBe(tomorrow);
+  });
+
+  it('rejects future reportDate when maxReportDate (today) is provided in validateExecutionReport', () => {
+    const resFuture = validateExecutionReport(sampleOrder, {
+      reportDate: '2026-10-20',
+      scheduledSourceDate: '2026-10-20',
+      colorId: 'c-azul',
+      operationId: 'op-a',
+      unitsExecuted: 10,
+      plannedUnitsOnBlock: 10,
+      maxReportDate: '2026-10-19',
+    });
+    expect(resFuture.valid).toBe(false);
+    expect(resFuture.error).toContain('no puede ser una fecha futura');
+  });
+
+  it('accounts for lunch break (breakStartTime and breakMinutes) in task wall-clock ranges', () => {
+    const mondaySched = DEFAULT_WORKSHOP_CONFIG.days.find((d) => d.dayOfWeek === 1)!;
+    // Morning task: 07:00 + 120 min = 07:00 - 09:00
+    expect(computeTaskClockRange(mondaySched, 0, 120)).toEqual({
+      startClock: '07:00',
+      endClock: '09:00',
+    });
+    // Task crossing lunch break (starts at 11:00 [240 min used], lasts 120 min work + 60 min lunch -> ends at 14:00)
+    expect(computeTaskClockRange(mondaySched, 240, 120)).toEqual({
+      startClock: '11:00',
+      endClock: '14:00',
+    });
+    // Afternoon task (starts right after 300 min morning work = 13:00 after lunch, lasts 240 min -> ends at 17:00)
+    expect(computeTaskClockRange(mondaySched, 300, 240)).toEqual({
+      startClock: '13:00',
+      endClock: '17:00',
+    });
+
+    // Verify full Monday in sampleOrder ends at 17:00 on wall clock
+    const schedule = buildProductionSchedule([sampleOrder], DEFAULT_WORKSHOP_CONFIG);
+    const monday = schedule.days.find((d) => d.date === '2026-10-19')!;
+    expect(monday.blocks[0].startClock).toBe('07:00');
+    expect(monday.blocks[0].endClock).toBe('12:00');
+    expect(monday.blocks[1].startClock).toBe('13:00');
+    expect(monday.blocks[1].endClock).toBe('17:00');
+  });
+
+  it('levels daily quotas proportionally to each day free capacity in by-deadline mode (e.g. Friday 9h vs Saturday 6h)', () => {
+    // Friday 2026-10-23 has 540 min capacity; Saturday 2026-10-24 has 360 min capacity (ratio 60% / 40%)
+    // Order with 450 min total (90 units * 5 min/unit) across Fri and Sat:
+    // Friday should receive 60% of 450 = 270 min (54 units) and Saturday 40% of 450 = 180 min (36 units)
+    const proportionalOrder: ProductionOrder = {
+      ...sampleOrder,
+      id: 'ord-prop-deadline',
+      receivedDate: '2026-10-23', // Friday
+      deliveryDate: '2026-10-24', // Saturday
+      deliveryMode: 'by-deadline',
+      colors: [{ id: 'c-1', colorName: 'Blanco', colorHex: '#FFF', units: 90 }],
+      operations: [
+        {
+          operationId: 'op-5m',
+          operationName: 'Costura 5m',
+          machine: 'Plana',
+          minutesPerUnit: 5,
+        },
+      ],
+    };
+
+    const res = buildProductionSchedule([proportionalOrder], DEFAULT_WORKSHOP_CONFIG);
+    const fri = res.days.find((d) => d.date === '2026-10-23')!;
+    const sat = res.days.find((d) => d.date === '2026-10-24')!;
+
+    expect(fri.usedMinutes).toBe(270); // 50% of 540 min capacity
+    expect(sat.usedMinutes).toBe(180); // 50% of 360 min capacity
+    expect(fri.blocks[0].unitsAssigned).toBe(54);
+    expect(sat.blocks[0].unitsAssigned).toBe(36);
   });
 });

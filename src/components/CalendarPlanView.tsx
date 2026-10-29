@@ -177,8 +177,32 @@ export const CalendarPlanView: React.FC<CalendarPlanViewProps> = ({
       operationId: reportingBlock.operationId,
       unitsExecuted: numericUnits,
       plannedUnitsOnBlock: reportingBlock.unitsAssigned,
+      maxReportDate: todayIso,
     });
-  }, [reportingBlock, productions, reportDateInput, unitsExecutedInput]);
+  }, [reportingBlock, productions, reportDateInput, unitsExecutedInput, todayIso]);
+
+  const handleQuickCheckboxToggle = (block: ScheduledTaskBlock) => {
+    if (block.isExecutedReport) {
+      if (block.executionLogId) {
+        onRemoveExecutionLog(block.productionId, block.executionLogId);
+      }
+      return;
+    }
+    if (completedKeysSet.has(block.taskKey)) {
+      onToggleTaskComplete(block.productionId, block.taskKey);
+      return;
+    }
+    const execDate = block.date > todayIso ? todayIso : block.date;
+    onSubmitExecutionReport(block.productionId, {
+      reportDate: execDate,
+      scheduledSourceDate: block.date,
+      colorId: block.colorId,
+      size: block.size,
+      operationId: block.operationId,
+      unitsExecuted: block.unitsAssigned,
+      plannedUnitsOnBlock: block.unitsAssigned,
+    });
+  };
 
   const handleSaveReport = (e: React.FormEvent) => {
     e.preventDefault();
@@ -644,14 +668,9 @@ export const CalendarPlanView: React.FC<CalendarPlanViewProps> = ({
                         {!block.isExecutedReport ? (
                           <button
                             type="button"
-                            onClick={() =>
-                              onToggleTaskComplete(
-                                block.productionId,
-                                block.taskKey
-                              )
-                            }
+                            onClick={() => handleQuickCheckboxToggle(block)}
                             className="mt-0.5 text-[#51344D] hover:scale-110 transition shrink-0"
-                            title="Marcar casilla rápida"
+                            title="Completar bloque al 100% (registra reporte ejecutado)"
                           >
                             {isDone ? (
                               <CheckSquare className="w-5 h-5 text-emerald-600" />
@@ -660,9 +679,14 @@ export const CalendarPlanView: React.FC<CalendarPlanViewProps> = ({
                             )}
                           </button>
                         ) : (
-                          <div className="mt-0.5 w-5 h-5 rounded-md bg-emerald-600 text-white flex items-center justify-center shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handleQuickCheckboxToggle(block)}
+                            className="mt-0.5 w-5 h-5 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white flex items-center justify-center shrink-0 transition"
+                            title="Desmarcar / Deshacer reporte ejecutado"
+                          >
                             <CheckCircle2 className="w-3.5 h-3.5" />
-                          </div>
+                          </button>
                         )}
 
                         <div className="min-w-0 flex-1">
@@ -963,6 +987,7 @@ export const CalendarPlanView: React.FC<CalendarPlanViewProps> = ({
                 <input
                   type="date"
                   required
+                  max={todayIso}
                   value={reportDateInput}
                   onChange={(e) => setReportDateInput(e.target.value)}
                   className="w-full min-w-0 px-3.5 py-2.5 border border-stone-300 rounded-xl text-sm font-medium focus:ring-2 focus:ring-[#E17726] focus:outline-none"

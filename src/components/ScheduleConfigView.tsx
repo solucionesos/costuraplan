@@ -119,7 +119,7 @@ export const ScheduleConfigView: React.FC<ScheduleConfigViewProps> = ({
               </div>
 
               {day.enabled && (
-                <div className="grid grid-cols-3 gap-2 mt-3 pt-2.5 border-t border-slate-100">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3 pt-2.5 border-t border-slate-100">
                   <div>
                     <label className="block text-[11px] font-medium text-slate-500 mb-1">
                       Hora Inicio
@@ -143,6 +143,22 @@ export const ScheduleConfigView: React.FC<ScheduleConfigViewProps> = ({
                       value={day.endTime}
                       onChange={(e) =>
                         updateDay(day.dayOfWeek, { endTime: e.target.value })
+                      }
+                      className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-medium text-slate-500 mb-1">
+                      Inicio Almuerzo
+                    </label>
+                    <input
+                      type="time"
+                      value={day.breakStartTime || '12:00'}
+                      onChange={(e) =>
+                        updateDay(day.dayOfWeek, {
+                          breakStartTime: e.target.value || '12:00',
+                        })
                       }
                       className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800"
                     />

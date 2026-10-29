@@ -122,6 +122,39 @@ export function calculateDayAvailableMinutes(day: DaySchedule): number {
   return Math.max(0, net);
 }
 
+/**
+ * Calcula la hora de inicio y fin en reloj de pared (HH:MM) teniendo en cuenta
+ * la pausa de almuerzo (breakStartTime + breakMinutes).
+ */
+export function computeTaskClockRange(
+  sched: DaySchedule,
+  startUsed: number,
+  durationMinutes: number
+): { startClock: string; endClock: string } {
+  const dayStartMin = parseTimeToMinutes(sched.startTime || '07:00');
+  const breakMin = Math.max(0, sched.breakMinutes || 0);
+  let rawStart = dayStartMin + startUsed;
+  let rawEnd = rawStart + durationMinutes;
+
+  if (breakMin > 0) {
+    const breakStartMin = parseTimeToMinutes(sched.breakStartTime || '12:00');
+    const morningWorkCapacity = Math.max(0, breakStartMin - dayStartMin);
+    if (morningWorkCapacity > 0) {
+      if (startUsed >= morningWorkCapacity) {
+        rawStart += breakMin;
+        rawEnd += breakMin;
+      } else if (startUsed + durationMinutes > morningWorkCapacity) {
+        rawEnd += breakMin;
+      }
+    }
+  }
+
+  return {
+    startClock: formatMinutesToClock(rawStart),
+    endClock: formatMinutesToClock(rawEnd),
+  };
+}
+
 export function calculateWeeklyMinutes(config: WorkshopConfig): number {
   return config.days.reduce((acc, day) => acc + calculateDayAvailableMinutes(day), 0);
 }
@@ -305,6 +338,7 @@ export function validateExecutionReport(
     operationId: string;
     unitsExecuted: number;
     plannedUnitsOnBlock: number;
+    maxReportDate?: string;
   }
 ): ExecutionReportValidation {
   const color = order.colors.find((c) => c.id === params.colorId);
@@ -325,6 +359,17 @@ export function validateExecutionReport(
     return {
       valid: false,
       error: `La fecha del reporte (${params.reportDate}) no puede ser anterior a la fecha de recepción (${order.receivedDate}).`,
+      noveltyType: 'exact',
+      shortfallUnits: 0,
+      maxAllowedUnits: 0,
+      summaryMessage: '',
+    };
+  }
+
+  if (params.maxReportDate && params.reportDate > params.maxReportDate) {
+    return {
+      valid: false,
+      error: `La fecha del reporte (${params.reportDate}) no puede ser una fecha futura posterior a hoy (${params.maxReportDate}).`,
       noveltyType: 'exact',
       shortfallUnits: 0,
       maxAllowedUnits: 0,
@@ -658,13 +703,7 @@ export function buildProductionSchedule(
 
   const computeClocks = (iso: string, startUsed: number, durationMinutes: number) => {
     const sched = getDayScheduleForDate(iso, config);
-    const dayStartMin = parseTimeToMinutes(sched.startTime || '07:00');
-    const rawStart = dayStartMin + startUsed;
-    const rawEnd = rawStart + durationMinutes;
-    return {
-      startClock: formatMinutesToClock(rawStart),
-      endClock: formatMinutesToClock(rawEnd),
-    };
+    return computeTaskClockRange(sched, startUsed, durationMinutes);
   };
 
   // STEP 1: Place all actual reported ExecutionLogs on their reportDate first
@@ -845,8 +884,9 @@ export function buildProductionSchedule(
       }
     }
 
-    // Calculate daily quota if 'by-deadline' (Fecha de Entrega: repartir en todos los días del plazo)
+    // Calculate daily quota if 'by-deadline' (Fecha de Entrega: nivelación proporcional a los minutos libres de cada día del plazo)
     let dailyDeadlineQuota: number | null = null;
+    const dailyQuotaByDate = new Map<string, number>();
     let windowEnd: string | null = null;
     const orderPendingUsedByDate = new Map<string, number>();
 
@@ -866,6 +906,7 @@ export function buildProductionSchedule(
           fallbackDay.remainingMinutes += summary.pendingMinutes;
         }
         dailyDeadlineQuota = summary.pendingMinutes;
+        dailyQuotaByDate.set(earliestOrderDate, summary.pendingMinutes);
       } else if (workingWindowDates.length > 0) {
         const rawAvgQuota = summary.pendingMinutes / workingWindowDates.length;
         // En modo estándar de fecha de entrega, evitar atomización ridícula (< 60 min/día):
@@ -879,12 +920,34 @@ export function buildProductionSchedule(
         }
         dailyDeadlineQuota = Math.ceil(Math.max(minQuota, rawAvgQuota));
 
-        // Solo si es fit-deadline explícito forzado se asegura capacidad extra en los días
-        if (isFitDeadlineMode) {
-          for (const wd of workingWindowDates) {
+        // Calcular la disponibilidad real de cada día de la ventana para nivelar proporcionalmente
+        const freeByDay = new Map<string, number>();
+        let totalFreeInWindow = 0;
+        for (const wd of workingWindowDates) {
+          const dp = ensureDayPlan(wd, 0);
+          const freeMin = isFitDeadlineMode
+            ? Math.max(dp.remainingMinutes, getAvailableMinutesForDate(wd, config))
+            : dp.remainingMinutes;
+          freeByDay.set(wd, freeMin);
+          totalFreeInWindow += freeMin;
+        }
+
+        for (const wd of workingWindowDates) {
+          const freeMin = freeByDay.get(wd) ?? 0;
+          const weight =
+            totalFreeInWindow > 0
+              ? freeMin / totalFreeInWindow
+              : 1 / workingWindowDates.length;
+          const proportionalQuota = summary.pendingMinutes * weight;
+          const dayQuota = Math.ceil(Math.max(minQuota, proportionalQuota));
+          dailyQuotaByDate.set(wd, dayQuota);
+
+          // Solo si es fit-deadline explícito forzado se asegura capacidad extra en los días
+          if (isFitDeadlineMode) {
             const dp = ensureDayPlan(wd, 0);
-            if (dp.remainingMinutes < dailyDeadlineQuota) {
-              const neededExtra = Math.ceil((dailyDeadlineQuota - dp.remainingMinutes) * 100) / 100;
+            if (dp.remainingMinutes < dayQuota) {
+              const neededExtra =
+                Math.ceil((dayQuota - dp.remainingMinutes) * 100) / 100;
               ensureDayPlan(wd, neededExtra);
             }
           }
@@ -955,11 +1018,13 @@ export function buildProductionSchedule(
           while (unitsLeftForOp > 0 && safetyCounter < 500) {
             safetyCounter += 1;
             const dayPlan = ensureDayPlan(cursorDate);
+            const quotaForToday =
+              dailyQuotaByDate.get(cursorDate) ?? dailyDeadlineQuota;
 
             // Calculate how many minutes this order is allowed to use on cursorDate
             let availableForOrderToday = dayPlan.remainingMinutes;
             if (
-              dailyDeadlineQuota !== null &&
+              quotaForToday !== null &&
               windowEnd !== null &&
               cursorDate <= windowEnd
             ) {
@@ -967,7 +1032,7 @@ export function buildProductionSchedule(
                 orderPendingUsedByDate.get(cursorDate) ?? 0;
               const remainingQuotaToday = Math.max(
                 0,
-                dailyDeadlineQuota - alreadyUsedTodayForOrder
+                quotaForToday - alreadyUsedTodayForOrder
               );
               availableForOrderToday = Math.min(
                 dayPlan.remainingMinutes,
@@ -1000,7 +1065,7 @@ export function buildProductionSchedule(
 
             // En modo by-deadline (sin forzado artificial de fit), evitar sobrecargar el día
             // si redondear hacia arriba excede la capacidad real del taller
-            if (isByDeadlineOrder && !isFitDeadlineMode && dailyDeadlineQuota !== null) {
+            if (isByDeadlineOrder && !isFitDeadlineMode && quotaForToday !== null) {
               const floorUnits = Math.floor(rawUnitsForToday + 1e-9);
               if (floorUnits > 0) {
                 unitsAssigned = Math.min(unitsLeftForOp, floorUnits);
@@ -1009,8 +1074,8 @@ export function buildProductionSchedule(
                     Math.round((unitsAssigned + 1) * op.minutesPerUnit * 100) / 100;
                   if (dayPlan.remainingMinutes >= costNext - 1e-6) {
                     const overshoot =
-                      alreadyUsedTodayForOrder + costNext - dailyDeadlineQuota;
-                    if (overshoot <= op.minutesPerUnit + 1e-6) {
+                      alreadyUsedTodayForOrder + costNext - quotaForToday;
+                    if (overshoot < op.minutesPerUnit - 1e-6) {
                       unitsAssigned += 1;
                     }
                   }
@@ -1096,12 +1161,12 @@ export function buildProductionSchedule(
 
             // Si en modo by-deadline ya se completó la cuota de la orden en este día, avanzar cursor al siguiente día
             if (
-              dailyDeadlineQuota !== null &&
+              quotaForToday !== null &&
               windowEnd !== null &&
               cursorDate <= windowEnd
             ) {
               const usedToday = orderPendingUsedByDate.get(cursorDate) ?? 0;
-              if (usedToday >= dailyDeadlineQuota - 0.001) {
+              if (usedToday >= quotaForToday - 0.001) {
                 cursorDate = addDaysIso(cursorDate, 1);
               }
             }
