@@ -18,6 +18,9 @@ import {
   History,
   EyeOff,
   Ruler,
+  ChevronLeft,
+  ChevronRight,
+  Coffee,
 } from 'lucide-react';
 import {
   ProductionOrder,
@@ -71,6 +74,7 @@ export const CalendarPlanView: React.FC<CalendarPlanViewProps> = ({
   );
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [showPastDays, setShowPastDays] = useState<boolean>(false);
+  const [taskFilter, setTaskFilter] = useState<'all' | 'pending' | 'done'>('all');
   const todayIso = getTodayIso();
 
   // Modal state for reporting execution or advancing future operations
@@ -126,6 +130,18 @@ export const CalendarPlanView: React.FC<CalendarPlanViewProps> = ({
     selectedDate && visibleDays.some((d) => d.date === selectedDate)
       ? selectedDate
       : defaultSelectedDate;
+
+  const currentDayIndex = useMemo(
+    () => visibleDays.findIndex((d) => d.date === currentSelectedDate),
+    [visibleDays, currentSelectedDate]
+  );
+
+  const prevDay =
+    currentDayIndex > 0 ? visibleDays[currentDayIndex - 1] : null;
+  const nextDay =
+    currentDayIndex >= 0 && currentDayIndex < visibleDays.length - 1
+      ? visibleDays[currentDayIndex + 1]
+      : null;
 
   const currentDayPlan = visibleDays.find(
     (d) => d.date === currentSelectedDate
@@ -565,282 +581,493 @@ export const CalendarPlanView: React.FC<CalendarPlanViewProps> = ({
           )}
 
           {/* Selected Day Detailed Schedule */}
-          {currentDayPlan && (
-            <div className="space-y-3">
-              {/* Day summary bar & Advance Future Operation Button */}
-              <div className="bg-white rounded-2xl p-3.5 sm:p-4 border border-stone-200 shadow-xs space-y-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <span className="text-xs font-bold uppercase text-[#E17726]">
-                      {currentDayPlan.dayName} • {currentDayPlan.date}
-                    </span>
-                    <h3 className="text-sm font-bold text-[#2e1f14] mt-0.5">
-                      {currentDayPlan.blocks.length > 0
-                        ? `${currentDayPlan.blocks.length} bloques de operación en este día`
-                        : 'Día sin operaciones asignadas'}
-                    </h3>
-                  </div>
+          {currentDayPlan && (() => {
+            const totalDayBlocks = currentDayPlan.blocks.length;
+            const doneDayBlocks = currentDayPlan.blocks.filter(
+              (b) => b.isExecutedReport || completedKeysSet.has(b.taskKey)
+            ).length;
+            const pendingDayBlocks = totalDayBlocks - doneDayBlocks;
+            const dayProgressPct =
+              totalDayBlocks > 0
+                ? Math.round((doneDayBlocks / totalDayBlocks) * 100)
+                : 0;
+            const capacityPct =
+              currentDayPlan.capacityMinutes > 0
+                ? Math.min(
+                    100,
+                    Math.round(
+                      (currentDayPlan.usedMinutes /
+                        currentDayPlan.capacityMinutes) *
+                        100
+                    )
+                  )
+                : 0;
 
-                  <div className="text-left sm:text-right">
-                    <span className="text-xs font-semibold text-[#51344D] block">
-                      Carga del día: {formatDurationHuman(currentDayPlan.usedMinutes)}
-                    </span>
-                    <span className="text-[11px] text-stone-500">
-                      Capacidad disp.:{' '}
-                      {formatDurationHuman(currentDayPlan.capacityMinutes)}
-                    </span>
-                  </div>
-                </div>
+            const dayScheduleCfg = workshopConfig.days.find(
+              (d) => d.dayOfWeek === currentDayPlan.dayOfWeek
+            );
+            const breakStartClock = dayScheduleCfg?.breakStartTime ?? '12:00';
+            const breakMin = dayScheduleCfg?.breakMinutes ?? 0;
 
-                {/* Action bar to advance operations from subsequent days on currentSelectedDate */}
-                {futurePendingBlocks.length > 0 && (
-                  <div className="pt-2.5 border-t border-stone-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                    <span className="text-xs text-stone-600">
-                      ¿Terminaste temprano o quieres adelantar trabajo de días posteriores en{' '}
-                      <strong>{currentDayPlan.date}</strong>?
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setIsAdvancePickerOpen(true)}
-                      className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 bg-[#E17726] hover:bg-[#c86419] text-white text-xs font-bold px-3 py-2 rounded-xl shadow-xs active:scale-95 transition shrink-0"
-                    >
-                      <FastForward className="w-3.5 h-3.5 shrink-0" />
-                      <span>Adelantar Operación de Otro Día</span>
-                    </button>
-                  </div>
-                )}
-              </div>
+            const indexedBlocks = currentDayPlan.blocks.map((block, idx) => ({
+              block,
+              originalIndex: idx,
+              isDone:
+                block.isExecutedReport || completedKeysSet.has(block.taskKey),
+            }));
 
-              {/* Colors Evacuated Banner on this day */}
-              {currentDayPlan.colorsEvacuated.length > 0 && (
-                <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-3.5 space-y-2">
-                  <div className="flex items-center gap-1.5 text-emerald-800 font-bold text-xs">
-                    <Sparkles className="w-4 h-4 text-emerald-600 shrink-0" />
-                    <span>
-                      ¡Colores 100% Terminados y Listos para Evacuar este Día!
-                    </span>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {currentDayPlan.colorsEvacuated.map((ev) => (
-                      <div
-                        key={`${ev.productionId}-${ev.colorId}`}
-                        className="inline-flex flex-wrap items-center gap-1.5 bg-white px-3 py-1.5 rounded-xl border border-emerald-200 text-xs shadow-2xs"
+            const filteredDayBlocks = indexedBlocks.filter((item) => {
+              if (taskFilter === 'pending') return !item.isDone;
+              if (taskFilter === 'done') return item.isDone;
+              return true;
+            });
+
+            return (
+              <div className="space-y-3">
+                {/* Day summary bar, Quick Prev/Next Navigation & Progress Bars */}
+                <div className="bg-white rounded-2xl p-3.5 sm:p-4 border border-stone-200 shadow-xs space-y-3">
+                  {/* Top Row: Day Title + Quick Prev/Today/Next Day Buttons */}
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-extrabold uppercase text-[#E17726]">
+                          {currentDayPlan.dayName} • {currentDayPlan.date}
+                        </span>
+                        {currentDayPlan.date === todayIso && (
+                          <span className="text-[10px] font-extrabold uppercase bg-[#E17726] text-white px-2 py-0.5 rounded-full">
+                            Hoy
+                          </span>
+                        )}
+                      </div>
+                      <h3 className="text-sm font-bold text-[#2e1f14] mt-0.5">
+                        {totalDayBlocks > 0
+                          ? `${totalDayBlocks} bloques de operación (${doneDayBlocks} listos • ${pendingDayBlocks} pendientes)`
+                          : 'Día sin operaciones asignadas'}
+                      </h3>
+                    </div>
+
+                    {/* Quick Day Stepper Buttons */}
+                    <div className="flex items-center gap-1.5 ml-auto">
+                      <button
+                        type="button"
+                        disabled={!prevDay}
+                        onClick={() => prevDay && setSelectedDate(prevDay.date)}
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl border border-stone-200 bg-[#f5f2f0] hover:bg-[#FDF2E9] hover:border-[#E17726] disabled:opacity-35 text-xs font-bold text-[#2e1f14] transition"
+                        title={
+                          prevDay
+                            ? `Ir a ${prevDay.dayName} ${prevDay.date}`
+                            : 'Primer día visible'
+                        }
                       >
-                        <span
-                          className="w-3.5 h-3.5 rounded-full border border-stone-300 shrink-0"
-                          style={{ backgroundColor: ev.colorHex }}
-                        />
-                        <span className="font-bold text-[#2e1f14]">
-                          Color {ev.colorName}
-                        </span>
-                        <span className="text-emerald-700 font-semibold">
-                          ({ev.totalUnits} uds listas)
-                        </span>
-                        <span className="text-stone-400">• {ev.garmentName}</span>
-                      </div>
-                    ))}
+                        <ChevronLeft className="w-3.5 h-3.5 shrink-0" />
+                        <span className="hidden sm:inline">Anterior</span>
+                      </button>
+
+                      {schedule.days.some((d) => d.date === todayIso) &&
+                        currentDayPlan.date !== todayIso && (
+                          <button
+                            type="button"
+                            onClick={() => setSelectedDate(todayIso)}
+                            className="px-2.5 py-1.5 rounded-xl bg-[#FDF2E9] hover:bg-[#E17726] hover:text-white text-[#E17726] border border-[#E17726]/40 text-xs font-bold transition"
+                          >
+                            Hoy
+                          </button>
+                        )}
+
+                      <button
+                        type="button"
+                        disabled={!nextDay}
+                        onClick={() => nextDay && setSelectedDate(nextDay.date)}
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl border border-stone-200 bg-[#f5f2f0] hover:bg-[#FDF2E9] hover:border-[#E17726] disabled:opacity-35 text-xs font-bold text-[#2e1f14] transition"
+                        title={
+                          nextDay
+                            ? `Ir a ${nextDay.dayName} ${nextDay.date}`
+                            : 'Último día visible'
+                        }
+                      >
+                        <span className="hidden sm:inline">Siguiente</span>
+                        <ChevronRight className="w-3.5 h-3.5 shrink-0" />
+                      </button>
+                    </div>
                   </div>
-                </div>
-              )}
 
-              {/* Chronological Operation Blocks for the Selected Day */}
-              <div className="space-y-2.5">
-                {currentDayPlan.blocks.map((block, index) => {
-                  const isDone =
-                    block.isExecutedReport ||
-                    completedKeysSet.has(block.taskKey);
-
-                  return (
-                    <div
-                      key={block.taskKey}
-                      className={`rounded-2xl p-3.5 border transition space-y-2.5 ${
-                        block.isExecutedReport
-                          ? 'bg-emerald-50/70 border-emerald-300 shadow-xs'
-                          : isDone
-                          ? 'bg-emerald-50/40 border-emerald-200 opacity-85'
-                          : block.isAfterDeadline
-                          ? 'bg-rose-50/40 border-rose-200'
-                          : 'bg-white border-stone-200 shadow-xs'
-                      }`}
-                    >
-                      {/* Row 1: Operation Name on top (full text, never truncated) */}
-                      <div className="flex items-start gap-2.5">
-                        {!block.isExecutedReport ? (
-                          <button
-                            type="button"
-                            onClick={() => handleQuickCheckboxToggle(block)}
-                            className="mt-0.5 text-[#51344D] hover:scale-110 transition shrink-0"
-                            title="Completar bloque al 100% (registra reporte ejecutado)"
-                          >
-                            {isDone ? (
-                              <CheckSquare className="w-5 h-5 text-emerald-600" />
-                            ) : (
-                              <Square className="w-5 h-5 text-stone-400" />
-                            )}
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => handleQuickCheckboxToggle(block)}
-                            className="mt-0.5 w-5 h-5 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white flex items-center justify-center shrink-0 transition"
-                            title="Desmarcar / Deshacer reporte ejecutado"
-                          >
-                            <CheckCircle2 className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-
-                        <div className="min-w-0 flex-1">
-                          <h4 className="font-bold text-sm text-[#2e1f14] break-words leading-snug">
-                            {index + 1}. {block.operationName}
-                          </h4>
-                          <p className="text-xs text-stone-500 break-words mt-0.5">
-                            Prenda: <strong>{block.garmentName}</strong> (
-                            {block.referenceCode})
-                          </p>
+                  {/* Dual Visual Progress Bars: Day Execution Progress & Workshop Capacity */}
+                  {totalDayBlocks > 0 && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+                      {/* Progress Bar 1: Completed Tasks */}
+                      <div className="bg-[#f5f2f0] rounded-xl p-2.5 border border-stone-200/80 space-y-1.5">
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="font-bold text-[#2e1f14]">
+                            Avance del Día:
+                          </span>
+                          <span className="font-extrabold text-emerald-700">
+                            {doneDayBlocks}/{totalDayBlocks} bloques ({dayProgressPct}%)
+                          </span>
+                        </div>
+                        <div className="w-full h-2 bg-stone-200 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-emerald-600 rounded-full transition-all duration-300"
+                            style={{ width: `${dayProgressPct}%` }}
+                          />
                         </div>
                       </div>
 
-                      {/* Row 2: Badges (Time, Color, Size, Machine) & Units Assigned below Operation Name */}
-                      <div className="flex flex-wrap items-center justify-between gap-2 pl-7">
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <span className="text-xs font-extrabold text-[#51344D] bg-[#F4EEF3] px-2 py-0.5 rounded-md flex items-center gap-1">
-                            <Clock className="w-3 h-3 text-[#E17726]" />
-                            {block.startClock} - {block.endClock}
+                      {/* Progress Bar 2: Workshop Time Capacity */}
+                      <div className="bg-[#f5f2f0] rounded-xl p-2.5 border border-stone-200/80 space-y-1.5">
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="font-bold text-[#51344D]">
+                            Carga Horaria: {formatDurationHuman(currentDayPlan.usedMinutes)}
                           </span>
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-[#f5f2f0] text-[#2e1f14] border border-stone-200">
-                            <span
-                              className="w-3 h-3 rounded-full border border-stone-400 shrink-0"
-                              style={{ backgroundColor: block.colorHex }}
-                            />
-                            Color {block.colorName}
+                          <span className="text-stone-500 font-semibold">
+                            de {formatDurationHuman(currentDayPlan.capacityMinutes)} ({capacityPct}%)
                           </span>
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-extrabold bg-[#FDF2E9] text-[#E17726] border border-[#E17726]/40">
-                            <Ruler className="w-3 h-3 shrink-0" />
-                            Talla {block.size}
-                          </span>
-                          <span className="text-[11px] text-stone-600 font-medium flex items-center gap-1 bg-stone-100 px-2 py-0.5 rounded-md">
-                            <Wrench className="w-3 h-3 text-stone-500" />
-                            {block.machine}
-                          </span>
-                          {block.isExecutedReport && (
-                            <span className="text-[10px] font-bold bg-emerald-600 text-white px-2 py-0.5 rounded-full">
-                              Reporte Ejecutado
-                            </span>
-                          )}
-                          {block.isAdvanceFromFuture && (
-                            <span className="text-[10px] font-bold bg-violet-100 text-violet-800 border border-violet-300 px-2 py-0.5 rounded-full">
-                              ⚡ Adelantado (de {block.scheduledSourceDate})
-                            </span>
-                          )}
                         </div>
-
-                        <div className="flex items-center gap-2 ml-auto">
-                          <span className="text-[11px] text-stone-500 font-medium">
-                            {formatDurationHuman(block.minutesAssigned)}
-                          </span>
-                          <span
-                            className={`inline-block font-extrabold text-xs px-2.5 py-1 rounded-xl ${
-                              block.isExecutedReport
-                                ? 'bg-emerald-700 text-white'
-                                : 'bg-[#51344D] text-white'
+                        <div className="w-full h-2 bg-stone-200 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full rounded-full transition-all duration-300 ${
+                              currentDayPlan.usedMinutes >
+                              currentDayPlan.capacityMinutes
+                                ? 'bg-rose-500'
+                                : 'bg-[#51344D]'
                             }`}
-                          >
-                            {block.unitsAssigned} uds{' '}
-                            {block.isExecutedReport ? 'hechas' : 'prog.'}
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Shortfall notification if this executed report shifted remaining units to next day */}
-                      {block.isExecutedReport &&
-                        (block.shortfallUnitsMovedNextDay ?? 0) > 0 && (
-                          <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-1.5 text-[11px] text-amber-900 flex items-center gap-1.5 font-medium">
-                            <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                            <span>
-                              Se realizaron menos de las programadas: las{' '}
-                              <strong>
-                                {block.shortfallUnitsMovedNextDay} uds faltantes
-                              </strong>{' '}
-                              se trasladaron automáticamente al día siguiente.
-                            </span>
-                          </div>
-                        )}
-
-                      {/* Footer with Action Buttons to Report Executed Units or Undo */}
-                      <div className="pt-2 border-t border-stone-100 flex flex-wrap items-center justify-between gap-2 text-[11px]">
-                        <div>
-                          {block.isColorCompletedInThisBlock ? (
-                            <span className="text-emerald-700 font-bold flex items-center gap-1">
-                              <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-                              <span>
-                                ¡Con esta operación queda 100% evacuado el color{' '}
-                                {block.colorName} ({block.totalColorUnits} uds)!
-                              </span>
-                            </span>
-                          ) : block.isSizeCompletedInThisBlock ? (
-                            <span className="text-[#51344D] font-bold flex items-center gap-1">
-                              <CheckCircle2 className="w-3.5 h-3.5 text-[#E17726] shrink-0" />
-                              <span>
-                                ¡Completa el 100% de la Talla {block.size} (
-                                {block.totalSizeUnits} uds) del color{' '}
-                                {block.colorName}!
-                              </span>
-                            </span>
-                          ) : block.isOperationCompletedInThisBlock ? (
-                            <span className="text-stone-600">
-                              Completa las {block.totalSizeUnits} uds de Talla{' '}
-                              {block.size} ({block.colorName})
-                            </span>
-                          ) : (
-                            <span className="text-amber-700 font-medium">
-                              Avance parcial ({block.unitsAssigned} de{' '}
-                              {block.totalSizeUnits} uds de Talla {block.size})
-                            </span>
-                          )}
-                        </div>
-
-                        <div className="flex items-center gap-2 ml-auto">
-                          {block.isAfterDeadline && (
-                            <span className="text-rose-600 font-bold flex items-center gap-1">
-                              <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-                              Fuera de plazo
-                            </span>
-                          )}
-
-                          {!block.isExecutedReport ? (
-                            <button
-                              type="button"
-                              onClick={() => openReportModalForBlock(block)}
-                              className="inline-flex items-center gap-1.5 bg-[#E17726] hover:bg-[#c86419] text-white font-bold px-3 py-1.5 rounded-xl text-xs shadow-2xs active:scale-95 transition"
-                            >
-                              <ClipboardCheck className="w-3.5 h-3.5 shrink-0" />
-                              <span>Ingresar Ejecutadas / Adelantar</span>
-                            </button>
-                          ) : (
-                            block.executionLogId && (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  onRemoveExecutionLog(
-                                    block.productionId,
-                                    block.executionLogId!
-                                  )
-                                }
-                                className="inline-flex items-center gap-1 text-rose-600 hover:bg-rose-50 px-2.5 py-1 rounded-lg text-xs font-semibold transition"
-                              >
-                                <RotateCcw className="w-3.5 h-3.5 shrink-0" />
-                                <span>Deshacer reporte</span>
-                              </button>
-                            )
-                          )}
+                            style={{ width: `${capacityPct}%` }}
+                          />
                         </div>
                       </div>
                     </div>
-                  );
-                })}
+                  )}
+
+                  {/* Quick Task Filter Tabs (Todas | Pendientes | Ejecutadas) */}
+                  {totalDayBlocks > 0 && (
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-stone-100">
+                      <span className="text-[11px] font-bold text-stone-500">
+                        Filtrar tareas del día:
+                      </span>
+                      <div className="flex bg-[#f5f2f0] p-1 rounded-xl border border-stone-200">
+                        <button
+                          type="button"
+                          onClick={() => setTaskFilter('all')}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition ${
+                            taskFilter === 'all'
+                              ? 'bg-[#51344D] text-white shadow-2xs'
+                              : 'text-stone-600 hover:text-[#2e1f14]'
+                          }`}
+                        >
+                          Todas ({totalDayBlocks})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setTaskFilter('pending')}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition ${
+                            taskFilter === 'pending'
+                              ? 'bg-[#E17726] text-white shadow-2xs'
+                              : 'text-stone-600 hover:text-[#2e1f14]'
+                          }`}
+                        >
+                          Pendientes ({pendingDayBlocks})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setTaskFilter('done')}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition ${
+                            taskFilter === 'done'
+                              ? 'bg-emerald-600 text-white shadow-2xs'
+                              : 'text-stone-600 hover:text-[#2e1f14]'
+                          }`}
+                        >
+                          Terminadas ({doneDayBlocks})
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Action bar to advance operations from subsequent days on currentSelectedDate */}
+                  {futurePendingBlocks.length > 0 && (
+                    <div className="pt-2.5 border-t border-stone-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <span className="text-xs text-stone-600">
+                        ¿Terminaste temprano o quieres adelantar trabajo de días posteriores en{' '}
+                        <strong>{currentDayPlan.date}</strong>?
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setIsAdvancePickerOpen(true)}
+                        className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 bg-[#E17726] hover:bg-[#c86419] text-white text-xs font-bold px-3 py-2 rounded-xl shadow-xs active:scale-95 transition shrink-0"
+                      >
+                        <FastForward className="w-3.5 h-3.5 shrink-0" />
+                        <span>Adelantar Operación de Otro Día</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Colors Evacuated Banner on this day */}
+                {currentDayPlan.colorsEvacuated.length > 0 && (
+                  <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-3.5 space-y-2">
+                    <div className="flex items-center gap-1.5 text-emerald-800 font-bold text-xs">
+                      <Sparkles className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <span>
+                        ¡Colores 100% Terminados y Listos para Evacuar este Día!
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {currentDayPlan.colorsEvacuated.map((ev) => (
+                        <div
+                          key={`${ev.productionId}-${ev.colorId}`}
+                          className="inline-flex flex-wrap items-center gap-1.5 bg-white px-3 py-1.5 rounded-xl border border-emerald-200 text-xs shadow-2xs"
+                        >
+                          <span
+                            className="w-3.5 h-3.5 rounded-full border border-stone-300 shrink-0"
+                            style={{ backgroundColor: ev.colorHex }}
+                          />
+                          <span className="font-bold text-[#2e1f14]">
+                            Color {ev.colorName}
+                          </span>
+                          <span className="text-emerald-700 font-semibold">
+                            ({ev.totalUnits} uds listas)
+                          </span>
+                          <span className="text-stone-400">• {ev.garmentName}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Empty filter state */}
+                {totalDayBlocks > 0 && filteredDayBlocks.length === 0 && (
+                  <div className="bg-white rounded-2xl p-6 text-center border border-stone-200 space-y-2">
+                    <p className="text-xs font-semibold text-stone-600">
+                      {taskFilter === 'pending'
+                        ? '¡Excelente! No quedan operaciones pendientes en este día.'
+                        : 'Aún no hay operaciones marcadas como terminadas en este día.'}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setTaskFilter('all')}
+                      className="text-xs font-bold text-[#E17726] hover:underline"
+                    >
+                      Ver todas las operaciones del día ({totalDayBlocks})
+                    </button>
+                  </div>
+                )}
+
+                {/* Chronological Operation Blocks for the Selected Day */}
+                <div className="space-y-2.5">
+                  {filteredDayBlocks.map(({ block, originalIndex, isDone }, filterIdx) => {
+                    const prevFiltered =
+                      filterIdx > 0 ? filteredDayBlocks[filterIdx - 1].block : null;
+                    const crossesLunchBreak =
+                      breakMin > 0 &&
+                      ((prevFiltered &&
+                        prevFiltered.endClock <= breakStartClock &&
+                        block.startClock >= breakStartClock &&
+                        block.startClock > prevFiltered.endClock) ||
+                        (block.startClock < breakStartClock &&
+                          block.endClock > breakStartClock));
+
+                    return (
+                      <React.Fragment key={block.taskKey}>
+                        {crossesLunchBreak &&
+                          prevFiltered &&
+                          prevFiltered.endClock <= breakStartClock && (
+                            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[#FDF2E9] border border-[#E17726]/30 text-[11px] font-bold text-[#51344D]">
+                              <Coffee className="w-3.5 h-3.5 text-[#E17726] shrink-0" />
+                              <span>
+                                Pausa de Almuerzo ({breakStartClock} • {breakMin} min)
+                              </span>
+                            </div>
+                          )}
+
+                        <div
+                          className={`rounded-2xl p-3.5 border transition space-y-2.5 ${
+                            block.isExecutedReport
+                              ? 'bg-emerald-50/70 border-emerald-300 shadow-xs'
+                              : isDone
+                              ? 'bg-emerald-50/40 border-emerald-200 opacity-85'
+                              : block.isAfterDeadline
+                              ? 'bg-rose-50/40 border-rose-200'
+                              : 'bg-white border-stone-200 shadow-xs'
+                          }`}
+                        >
+                          {/* Row 1: Operation Name on top (full text, never truncated) */}
+                          <div className="flex items-start gap-2.5">
+                            {!block.isExecutedReport ? (
+                              <button
+                                type="button"
+                                onClick={() => handleQuickCheckboxToggle(block)}
+                                className="mt-0.5 text-[#51344D] hover:scale-110 transition shrink-0"
+                                title="Completar bloque al 100% (registra reporte ejecutado)"
+                              >
+                                {isDone ? (
+                                  <CheckSquare className="w-5 h-5 text-emerald-600" />
+                                ) : (
+                                  <Square className="w-5 h-5 text-stone-400" />
+                                )}
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => handleQuickCheckboxToggle(block)}
+                                className="mt-0.5 w-5 h-5 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white flex items-center justify-center shrink-0 transition"
+                                title="Desmarcar / Deshacer reporte ejecutado"
+                              >
+                                <CheckCircle2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+
+                            <div className="min-w-0 flex-1">
+                              <h4 className="font-bold text-sm text-[#2e1f14] break-words leading-snug">
+                                {originalIndex + 1}. {block.operationName}
+                              </h4>
+                              <p className="text-xs text-stone-500 break-words mt-0.5">
+                                Prenda: <strong>{block.garmentName}</strong> (
+                                {block.referenceCode})
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Row 2: Badges (Time, Color, Size, Machine) & Units Assigned below Operation Name */}
+                          <div className="flex flex-wrap items-center justify-between gap-2 pl-7">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span className="text-xs font-extrabold text-[#51344D] bg-[#F4EEF3] px-2 py-0.5 rounded-md flex items-center gap-1">
+                                <Clock className="w-3 h-3 text-[#E17726]" />
+                                {block.startClock} - {block.endClock}
+                              </span>
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-[#f5f2f0] text-[#2e1f14] border border-stone-200">
+                                <span
+                                  className="w-3 h-3 rounded-full border border-stone-400 shrink-0"
+                                  style={{ backgroundColor: block.colorHex }}
+                                />
+                                Color {block.colorName}
+                              </span>
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-extrabold bg-[#FDF2E9] text-[#E17726] border border-[#E17726]/40">
+                                <Ruler className="w-3 h-3 shrink-0" />
+                                Talla {block.size}
+                              </span>
+                              <span className="text-[11px] text-stone-600 font-medium flex items-center gap-1 bg-stone-100 px-2 py-0.5 rounded-md">
+                                <Wrench className="w-3 h-3 text-stone-500" />
+                                {block.machine}
+                              </span>
+                              {block.isExecutedReport && (
+                                <span className="text-[10px] font-bold bg-emerald-600 text-white px-2 py-0.5 rounded-full">
+                                  Reporte Ejecutado
+                                </span>
+                              )}
+                              {block.isAdvanceFromFuture && (
+                                <span className="text-[10px] font-bold bg-violet-100 text-violet-800 border border-violet-300 px-2 py-0.5 rounded-full">
+                                  ⚡ Adelantado (de {block.scheduledSourceDate})
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="flex items-center gap-2 ml-auto">
+                              <span className="text-[11px] text-stone-500 font-medium">
+                                {formatDurationHuman(block.minutesAssigned)}
+                              </span>
+                              <span
+                                className={`inline-block font-extrabold text-xs px-2.5 py-1 rounded-xl ${
+                                  block.isExecutedReport
+                                    ? 'bg-emerald-700 text-white'
+                                    : 'bg-[#51344D] text-white'
+                                }`}
+                              >
+                                {block.unitsAssigned} uds{' '}
+                                {block.isExecutedReport ? 'hechas' : 'prog.'}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Shortfall notification if this executed report shifted remaining units to next day */}
+                          {block.isExecutedReport &&
+                            (block.shortfallUnitsMovedNextDay ?? 0) > 0 && (
+                              <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-1.5 text-[11px] text-amber-900 flex items-center gap-1.5 font-medium">
+                                <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                                <span>
+                                  Se realizaron menos de las programadas: las{' '}
+                                  <strong>
+                                    {block.shortfallUnitsMovedNextDay} uds faltantes
+                                  </strong>{' '}
+                                  se trasladaron automáticamente al día siguiente.
+                                </span>
+                              </div>
+                            )}
+
+                          {/* Footer with Action Buttons to Report Executed Units or Undo */}
+                          <div className="pt-2 border-t border-stone-100 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                            <div>
+                              {block.isColorCompletedInThisBlock ? (
+                                <span className="text-emerald-700 font-bold flex items-center gap-1">
+                                  <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                                  <span>
+                                    ¡Con esta operación queda 100% evacuado el color{' '}
+                                    {block.colorName} ({block.totalColorUnits} uds)!
+                                  </span>
+                                </span>
+                              ) : block.isSizeCompletedInThisBlock ? (
+                                <span className="text-[#51344D] font-bold flex items-center gap-1">
+                                  <CheckCircle2 className="w-3.5 h-3.5 text-[#E17726] shrink-0" />
+                                  <span>
+                                    ¡Completa el 100% de la Talla {block.size} (
+                                    {block.totalSizeUnits} uds) del color{' '}
+                                    {block.colorName}!
+                                  </span>
+                                </span>
+                              ) : block.isOperationCompletedInThisBlock ? (
+                                <span className="text-stone-600">
+                                  Completa las {block.totalSizeUnits} uds de Talla{' '}
+                                  {block.size} ({block.colorName})
+                                </span>
+                              ) : (
+                                <span className="text-amber-700 font-medium">
+                                  Avance parcial ({block.unitsAssigned} de{' '}
+                                  {block.totalSizeUnits} uds de Talla {block.size})
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="flex items-center gap-2 ml-auto">
+                              {block.isAfterDeadline && (
+                                <span className="text-rose-600 font-bold flex items-center gap-1">
+                                  <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                                  Fuera de plazo
+                                </span>
+                              )}
+
+                              {!block.isExecutedReport ? (
+                                <button
+                                  type="button"
+                                  onClick={() => openReportModalForBlock(block)}
+                                  className="inline-flex items-center gap-1.5 bg-[#E17726] hover:bg-[#c86419] text-white font-bold px-3 py-1.5 rounded-xl text-xs shadow-2xs active:scale-95 transition"
+                                >
+                                  <ClipboardCheck className="w-3.5 h-3.5 shrink-0" />
+                                  <span>Ingresar Ejecutadas / Adelantar</span>
+                                </button>
+                              ) : (
+                                block.executionLogId && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      onRemoveExecutionLog(
+                                        block.productionId,
+                                        block.executionLogId!
+                                      )
+                                    }
+                                    className="inline-flex items-center gap-1 text-rose-600 hover:bg-rose-50 px-2.5 py-1 rounded-lg text-xs font-semibold transition"
+                                  >
+                                    <RotateCcw className="w-3.5 h-3.5 shrink-0" />
+                                    <span>Deshacer reporte</span>
+                                  </button>
+                                )
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </React.Fragment>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
         </>
       ) : (
         <div className="bg-white rounded-2xl p-8 text-center border border-dashed border-stone-300">

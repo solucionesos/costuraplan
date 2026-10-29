@@ -20,6 +20,8 @@ import {
   ArrowUpWideNarrow,
   ArrowDownWideNarrow,
   Ruler,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import {
   ColorBatch,
@@ -115,6 +117,14 @@ export const ProductionView: React.FC<ProductionViewProps> = ({
   const [inlineSizeDrafts, setInlineSizeDrafts] = useState<
     Record<string, { size: string; units: string }>
   >({});
+
+  // Collapsible operations list per production card & delete confirmation guard
+  const [expandedCardOps, setExpandedCardOps] = useState<
+    Record<string, boolean>
+  >({});
+  const [confirmDeleteOrderId, setConfirmDeleteOrderId] = useState<
+    string | null
+  >(null);
 
   // Operation selector sub-form
   const [selectedCatalogOpId, setSelectedCatalogOpId] = useState(
@@ -261,6 +271,26 @@ export const ProductionView: React.FC<ProductionViewProps> = ({
           };
         } else {
           list.push({ size: sizeStr, units: unitsNum });
+        }
+        const total = list.reduce((acc, s) => acc + s.units, 0);
+        return { ...norm, units: total, sizes: list };
+      })
+    );
+  };
+
+  const handleAddStandardCurveToColor = (colorId: string, unitsPerSize = 20) => {
+    const standardSizes = ['S', 'M', 'L', 'XL'];
+    setColors(
+      colors.map((c) => {
+        if (c.id !== colorId) return c;
+        const norm = normalizeColorWithSizes(c);
+        const list = [...(norm.sizes ?? [])].filter(
+          (s) => s.size.toLowerCase() !== 'única' && s.size.toLowerCase() !== 'unica'
+        );
+        for (const stdSize of standardSizes) {
+          if (!list.some((s) => s.size.toUpperCase() === stdSize)) {
+            list.push({ size: stdSize, units: unitsPerSize });
+          }
         }
         const total = list.reduce((acc, s) => acc + s.units, 0);
         return { ...norm, units: total, sizes: list };
@@ -517,6 +547,26 @@ export const ProductionView: React.FC<ProductionViewProps> = ({
             evaluateProductionSummary(order, workshopConfig);
           const currentDeliveryMode = order.deliveryMode ?? 'asap';
           const currentSizeSortOrder = order.sizeSortOrder ?? 'asc';
+          const isOpsExpanded = Boolean(expandedCardOps[order.id]);
+
+          // Compute overall execution progress for this production order
+          const opMinMap = new Map(
+            order.operations.map((o) => [o.operationId, o.minutesPerUnit])
+          );
+          const executedMinutes = (order.executionLogs ?? []).reduce(
+            (sum, log) =>
+              sum + log.unitsExecuted * (opMinMap.get(log.operationId) ?? 0),
+            0
+          );
+          const progressPct =
+            summary.totalRequiredMinutes > 0
+              ? Math.min(
+                  100,
+                  Math.round(
+                    (executedMinutes / summary.totalRequiredMinutes) * 100
+                  )
+                )
+              : 0;
 
           return (
             <div
@@ -553,14 +603,56 @@ export const ProductionView: React.FC<ProductionViewProps> = ({
                   >
                     <Pencil className="w-4 h-4" />
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => handleDeleteOrder(order.id)}
-                    className="p-2 text-stone-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition"
-                    title="Eliminar producción"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                  {confirmDeleteOrderId === order.id ? (
+                    <div className="flex items-center gap-1 bg-rose-50 border border-rose-200 rounded-xl px-2 py-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          handleDeleteOrder(order.id);
+                          setConfirmDeleteOrderId(null);
+                        }}
+                        className="text-[11px] font-extrabold text-white bg-rose-600 hover:bg-rose-700 px-2 py-0.5 rounded-lg"
+                      >
+                        Sí, borrar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeleteOrderId(null)}
+                        className="text-[11px] font-semibold text-stone-600 px-1.5 py-0.5"
+                      >
+                        No
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDeleteOrderId(order.id)}
+                      className="p-2 text-stone-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition"
+                      title="Eliminar producción"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Overall Production Order Progress Bar */}
+              <div className="bg-[#f5f2f0] rounded-xl p-2.5 border border-stone-200/80 space-y-1.5">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-bold text-[#2e1f14]">
+                    Avance General de la Orden:
+                  </span>
+                  <span className="font-extrabold text-emerald-700">
+                    {progressPct}% completado (
+                    {formatDurationHuman(Math.round(executedMinutes))} de{' '}
+                    {formatDurationHuman(summary.totalRequiredMinutes)})
+                  </span>
+                </div>
+                <div className="w-full h-2 bg-stone-200 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-emerald-600 rounded-full transition-all duration-300"
+                    style={{ width: `${progressPct}%` }}
+                  />
                 </div>
               </div>
 
@@ -757,122 +849,155 @@ export const ProductionView: React.FC<ProductionViewProps> = ({
                 </div>
               </div>
 
-              {/* Drag & Drop Operations List on Production Card (Full name on top, controls below) */}
+              {/* Drag & Drop Operations List on Production Card (Collapsible for cleaner scanning) */}
               <div className="space-y-2">
-                <span className="text-xs font-bold text-[#2e1f14] flex items-center gap-1">
-                  <Clock className="w-3.5 h-3.5 text-[#51344D] shrink-0" />
-                  <span>
-                    Orden de Operaciones ({order.operations.length}) — Arrastra para cambiar prioridad:
+                <button
+                  type="button"
+                  onClick={() =>
+                    setExpandedCardOps((prev) => ({
+                      ...prev,
+                      [order.id]: !prev[order.id],
+                    }))
+                  }
+                  className="w-full flex items-center justify-between gap-2 bg-[#f5f2f0] hover:bg-[#FDF2E9]/70 border border-stone-200 px-3 py-2 rounded-xl text-xs font-bold text-[#2e1f14] transition"
+                >
+                  <span className="flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5 text-[#51344D] shrink-0" />
+                    <span>
+                      Orden de Operaciones ({order.operations.length}) —{' '}
+                      {isOpsExpanded
+                        ? 'Arrastra para cambiar prioridad'
+                        : 'Toca para ver o reordenar'}
+                    </span>
                   </span>
-                </span>
+                  {isOpsExpanded ? (
+                    <ChevronUp className="w-4 h-4 text-[#E17726] shrink-0" />
+                  ) : (
+                    <ChevronDown className="w-4 h-4 text-stone-500 shrink-0" />
+                  )}
+                </button>
 
-                <div className="space-y-2">
-                  {order.operations.map((op, i) => {
-                    const isBeingDragged =
-                      draggedCardOp?.orderId === order.id &&
-                      draggedCardOp?.index === i;
-                    const isDragTarget =
-                      dragOverCardOp?.orderId === order.id &&
-                      dragOverCardOp?.index === i;
-
-                    return (
-                      <div
+                {!isOpsExpanded ? (
+                  <div className="flex flex-wrap gap-1.5 pt-0.5">
+                    {order.operations.map((op, i) => (
+                      <span
                         key={`${op.operationId}-${i}`}
-                        draggable
-                        onDragStart={() =>
-                          setDraggedCardOp({ orderId: order.id, index: i })
-                        }
-                        onDragOver={(e) => {
-                          e.preventDefault();
-                          if (
-                            dragOverCardOp?.orderId !== order.id ||
-                            dragOverCardOp?.index !== i
-                          ) {
-                            setDragOverCardOp({ orderId: order.id, index: i });
-                          }
-                        }}
-                        onDragLeave={() => {
-                          if (
-                            dragOverCardOp?.orderId === order.id &&
-                            dragOverCardOp?.index === i
-                          ) {
-                            setDragOverCardOp(null);
-                          }
-                        }}
-                        onDrop={(e) => {
-                          e.preventDefault();
-                          if (
-                            draggedCardOp &&
-                            draggedCardOp.orderId === order.id &&
-                            draggedCardOp.index !== i
-                          ) {
-                            handleReorderCardOperation(
-                              order,
-                              draggedCardOp.index,
-                              i
-                            );
-                          }
-                          setDraggedCardOp(null);
-                          setDragOverCardOp(null);
-                        }}
-                        onDragEnd={() => {
-                          setDraggedCardOp(null);
-                          setDragOverCardOp(null);
-                        }}
-                        className={`p-2.5 rounded-xl border text-xs cursor-grab active:cursor-grabbing select-none touch-pan-y transition space-y-1.5 ${
-                          isBeingDragged
-                            ? 'opacity-40 bg-stone-100 border-stone-300'
-                            : isDragTarget
-                            ? 'bg-[#FDF2E9] border-[#E17726] border-2'
-                            : 'bg-stone-50 hover:bg-[#FDF2E9]/40 border-stone-200'
-                        }`}
+                        className="inline-flex items-center gap-1 bg-stone-50 border border-stone-200 px-2 py-1 rounded-lg text-[11px] text-[#2e1f14]"
                       >
-                        {/* Top Row: Full Operation Name (Never Truncated) */}
-                        <div className="flex items-start gap-2">
-                          <GripVertical className="w-4 h-4 text-stone-400 shrink-0 mt-0.5" />
-                          <span className="w-5 h-5 rounded-md bg-[#51344D] text-white font-bold text-[10px] flex items-center justify-center shrink-0 mt-0.5">
-                            {i + 1}
-                          </span>
-                          <span className="font-bold text-sm text-[#2e1f14] break-words leading-snug flex-1">
-                            {op.operationName}
-                          </span>
-                        </div>
+                        <strong className="text-[#51344D]">{i + 1}.</strong>
+                        <span className="break-words">{op.operationName}</span>
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {order.operations.map((op, i) => {
+                      const isBeingDragged =
+                        draggedCardOp?.orderId === order.id &&
+                        draggedCardOp?.index === i;
+                      const isDragTarget =
+                        dragOverCardOp?.orderId === order.id &&
+                        dragOverCardOp?.index === i;
 
-                        {/* Bottom Row: Machine, Time & Priority Arrows */}
-                        <div className="flex items-center justify-between pl-6 pt-1 border-t border-stone-200/60">
-                          <span className="text-[11px] text-stone-600 bg-white px-2 py-0.5 rounded-md border border-stone-200 font-medium">
-                            {op.machine} • <strong>{op.minutesPerUnit} min</strong> ({Math.round(op.minutesPerUnit * 60)} seg)
-                          </span>
+                      return (
+                        <div
+                          key={`${op.operationId}-${i}`}
+                          draggable
+                          onDragStart={() =>
+                            setDraggedCardOp({ orderId: order.id, index: i })
+                          }
+                          onDragOver={(e) => {
+                            e.preventDefault();
+                            if (
+                              dragOverCardOp?.orderId !== order.id ||
+                              dragOverCardOp?.index !== i
+                            ) {
+                              setDragOverCardOp({ orderId: order.id, index: i });
+                            }
+                          }}
+                          onDragLeave={() => {
+                            if (
+                              dragOverCardOp?.orderId === order.id &&
+                              dragOverCardOp?.index === i
+                            ) {
+                              setDragOverCardOp(null);
+                            }
+                          }}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            if (
+                              draggedCardOp &&
+                              draggedCardOp.orderId === order.id &&
+                              draggedCardOp.index !== i
+                            ) {
+                              handleReorderCardOperation(
+                                order,
+                                draggedCardOp.index,
+                                i
+                              );
+                            }
+                            setDraggedCardOp(null);
+                            setDragOverCardOp(null);
+                          }}
+                          onDragEnd={() => {
+                            setDraggedCardOp(null);
+                            setDragOverCardOp(null);
+                          }}
+                          className={`p-2.5 rounded-xl border text-xs cursor-grab active:cursor-grabbing select-none touch-pan-y transition space-y-1.5 ${
+                            isBeingDragged
+                              ? 'opacity-40 bg-stone-100 border-stone-300'
+                              : isDragTarget
+                              ? 'bg-[#FDF2E9] border-[#E17726] border-2'
+                              : 'bg-stone-50 hover:bg-[#FDF2E9]/40 border-stone-200'
+                          }`}
+                        >
+                          {/* Top Row: Full Operation Name (Never Truncated) */}
+                          <div className="flex items-start gap-2">
+                            <GripVertical className="w-4 h-4 text-stone-400 shrink-0 mt-0.5" />
+                            <span className="w-5 h-5 rounded-md bg-[#51344D] text-white font-bold text-[10px] flex items-center justify-center shrink-0 mt-0.5">
+                              {i + 1}
+                            </span>
+                            <span className="font-bold text-sm text-[#2e1f14] break-words leading-snug flex-1">
+                              {op.operationName}
+                            </span>
+                          </div>
 
-                          <div className="flex items-center gap-1">
-                            <button
-                              type="button"
-                              disabled={i === 0}
-                              onClick={() =>
-                                handleReorderCardOperation(order, i, i - 1)
-                              }
-                              className="p-1.5 bg-white border border-stone-200 text-stone-600 hover:text-[#2e1f14] disabled:opacity-30 rounded-lg"
-                              title="Subir prioridad"
-                            >
-                              <ArrowUp className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              type="button"
-                              disabled={i === order.operations.length - 1}
-                              onClick={() =>
-                                handleReorderCardOperation(order, i, i + 1)
-                              }
-                              className="p-1.5 bg-white border border-stone-200 text-stone-600 hover:text-[#2e1f14] disabled:opacity-30 rounded-lg"
-                              title="Bajar prioridad"
-                            >
-                              <ArrowDown className="w-3.5 h-3.5" />
-                            </button>
+                          {/* Bottom Row: Machine, Time & Priority Arrows */}
+                          <div className="flex items-center justify-between pl-6 pt-1 border-t border-stone-200/60">
+                            <span className="text-[11px] text-stone-600 bg-white px-2 py-0.5 rounded-md border border-stone-200 font-medium">
+                              {op.machine} • <strong>{op.minutesPerUnit} min</strong> ({Math.round(op.minutesPerUnit * 60)} seg)
+                            </span>
+
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                disabled={i === 0}
+                                onClick={() =>
+                                  handleReorderCardOperation(order, i, i - 1)
+                                }
+                                className="p-1.5 bg-white border border-stone-200 text-stone-600 hover:text-[#2e1f14] disabled:opacity-30 rounded-lg"
+                                title="Subir prioridad"
+                              >
+                                <ArrowUp className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                disabled={i === order.operations.length - 1}
+                                onClick={() =>
+                                  handleReorderCardOperation(order, i, i + 1)
+                                }
+                                className="p-1.5 bg-white border border-stone-200 text-stone-600 hover:text-[#2e1f14] disabled:opacity-30 rounded-lg"
+                                title="Bajar prioridad"
+                              >
+                                <ArrowDown className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
               {/* Feasibility Status & Jump to Calendar */}
@@ -1416,6 +1541,19 @@ export const ProductionView: React.FC<ProductionViewProps> = ({
                               className="bg-[#E17726] hover:bg-[#c86419] text-white px-2.5 py-1 rounded-lg text-[11px] font-bold"
                             >
                               + Talla a {c.colorName}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleAddStandardCurveToColor(
+                                  c.id,
+                                  parseInt(draft.units, 10) || 20
+                                )
+                              }
+                              className="bg-[#51344D] hover:bg-[#3B2538] text-white px-2.5 py-1 rounded-lg text-[11px] font-bold"
+                              title="Agregar tallas S, M, L y XL rápidamente a este color"
+                            >
+                              + Curva S-M-L-XL
                             </button>
                           </div>
                         </div>

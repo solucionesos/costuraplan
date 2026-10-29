@@ -199,7 +199,7 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen w-full max-w-2xl mx-auto bg-[#f5f2f0] text-[#2e1f14] flex flex-col border-x border-stone-300/80 shadow-sm">
+    <div className="min-h-screen w-full max-w-4xl mx-auto bg-[#f5f2f0] text-[#2e1f14] flex flex-col border-x border-stone-300/80 shadow-sm">
       {/* Top Corporate App Bar (#51344D Soluciones Open Source) */}
       <header className="sticky top-0 z-30 bg-[#51344D] text-white border-b-2 border-[#E17726] px-3 sm:px-4 py-2.5 flex items-center justify-between gap-2 shadow-md">
         <div className="flex items-center gap-2.5 min-w-0">
@@ -344,7 +344,7 @@ export const App: React.FC = () => {
 
       {/* Bottom Mobile Navigation Bar (#51344D with #E17726 active state) */}
       <nav className="fixed bottom-0 left-0 right-0 z-40 bg-[#51344D] text-white border-t-2 border-[#E17726] safe-bottom shadow-lg">
-        <div className="max-w-2xl mx-auto grid grid-cols-4 px-1.5 sm:px-2 py-1.5">
+        <div className="max-w-4xl mx-auto grid grid-cols-4 px-1.5 sm:px-2 py-1.5 gap-1">
           <button
             onClick={() => setActiveTab('calendar')}
             className={`flex flex-col items-center justify-center py-1.5 rounded-xl transition ${
@@ -359,25 +359,51 @@ export const App: React.FC = () => {
 
           <button
             onClick={() => setActiveTab('productions')}
-            className={`flex flex-col items-center justify-center py-1.5 rounded-xl transition ${
+            className={`relative flex flex-col items-center justify-center py-1.5 rounded-xl transition ${
               activeTab === 'productions'
                 ? 'bg-[#E17726] text-white font-bold shadow-xs'
                 : 'text-stone-300 font-medium hover:text-white'
             }`}
           >
-            <ClipboardList className="w-5 h-5" />
+            <div className="relative">
+              <ClipboardList className="w-5 h-5" />
+              {productions.length > 0 && (
+                <span
+                  className={`absolute -top-1.5 -right-3 text-[9px] font-extrabold px-1.5 rounded-full leading-tight ${
+                    activeTab === 'productions'
+                      ? 'bg-white text-[#51344D]'
+                      : 'bg-[#E17726] text-white'
+                  }`}
+                >
+                  {productions.length}
+                </span>
+              )}
+            </div>
             <span className="text-[11px] mt-0.5">Producción</span>
           </button>
 
           <button
             onClick={() => setActiveTab('operations')}
-            className={`flex flex-col items-center justify-center py-1.5 rounded-xl transition ${
+            className={`relative flex flex-col items-center justify-center py-1.5 rounded-xl transition ${
               activeTab === 'operations'
                 ? 'bg-[#E17726] text-white font-bold shadow-xs'
                 : 'text-stone-300 font-medium hover:text-white'
             }`}
           >
-            <Scissors className="w-5 h-5" />
+            <div className="relative">
+              <Scissors className="w-5 h-5" />
+              {operations.length > 0 && (
+                <span
+                  className={`absolute -top-1.5 -right-3.5 text-[9px] font-extrabold px-1.5 rounded-full leading-tight ${
+                    activeTab === 'operations'
+                      ? 'bg-white text-[#51344D]'
+                      : 'bg-white/20 text-white'
+                  }`}
+                >
+                  {operations.length}
+                </span>
+              )}
+            </div>
             <span className="text-[11px] mt-0.5">Operaciones</span>
           </button>
 

@@ -46,6 +46,7 @@ export const OperationsView: React.FC<OperationsViewProps> = ({
   const [selectedMachine, setSelectedMachine] = useState<string>('Todas');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingOp, setEditingOp] = useState<SewingOperation | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   // Form states
   const [name, setName] = useState('');
@@ -222,13 +223,35 @@ export const OperationsView: React.FC<OperationsViewProps> = ({
                   >
                     <Pencil className="w-4 h-4" />
                   </button>
-                  <button
-                    onClick={() => handleDelete(op.id)}
-                    className="p-1.5 text-stone-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
-                    title="Eliminar operación"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                  {confirmDeleteId === op.id ? (
+                    <div className="flex items-center gap-1 bg-rose-50 border border-rose-200 rounded-xl px-2 py-0.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          handleDelete(op.id);
+                          setConfirmDeleteId(null);
+                        }}
+                        className="text-[11px] font-extrabold text-white bg-rose-600 hover:bg-rose-700 px-2 py-0.5 rounded-md"
+                      >
+                        Borrar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeleteId(null)}
+                        className="text-[11px] font-semibold text-stone-600 px-1 py-0.5"
+                      >
+                        No
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => setConfirmDeleteId(op.id)}
+                      className="p-1.5 text-stone-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
+                      title="Eliminar operación"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
                 </div>
               </div>
 
