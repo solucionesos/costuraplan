@@ -263,7 +263,7 @@ export const App: React.FC = () => {
 
         {activeTab === 'calendar' && (
           <CalendarPlanView
-            productions={productions}
+            productions={productions.filter((p) => !p.finishedAt)}
             workshopConfig={workshopConfig}
             selectedProductionId={selectedProductionId}
             onSelectProductionId={setSelectedProductionId}
@@ -375,7 +375,7 @@ export const App: React.FC = () => {
                       : 'bg-[#E17726] text-white'
                   }`}
                 >
-                  {productions.length}
+                  {productions.filter((p) => !p.finishedAt).length}
                 </span>
               )}
             </div>

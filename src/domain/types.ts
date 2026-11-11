@@ -74,6 +74,8 @@ export interface ExecutionLog {
 }
 
 export interface ProductionOrder {
+  /** Fecha ISO en que la producción se dio por terminada (oculta del calendario). */
+  finishedAt?: string;
   id: string;
   garmentName: string;
   referenceCode: string;

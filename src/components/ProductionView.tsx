@@ -22,6 +22,8 @@ import {
   Ruler,
   ChevronDown,
   ChevronUp,
+  Archive,
+  ArchiveRestore,
 } from 'lucide-react';
 import {
   ColorBatch,
@@ -123,6 +125,10 @@ export const ProductionView: React.FC<ProductionViewProps> = ({
     Record<string, boolean>
   >({});
   const [confirmDeleteOrderId, setConfirmDeleteOrderId] = useState<
+    string | null
+  >(null);
+  const [showFinished, setShowFinished] = useState(false);
+  const [confirmFinishOrderId, setConfirmFinishOrderId] = useState<
     string | null
   >(null);
 
@@ -490,10 +496,42 @@ export const ProductionView: React.FC<ProductionViewProps> = ({
     onSaveProductions(productions.filter((p) => p.id !== id));
   };
 
-  // Automatic real-time schedule computed from live productions & workshopConfig
+  const activeOrders = useMemo(
+    () => productions.filter((p) => !p.finishedAt),
+    [productions]
+  );
+  const finishedOrders = useMemo(
+    () =>
+      productions
+        .filter((p) => p.finishedAt)
+        .sort((a, b) => (b.finishedAt ?? '').localeCompare(a.finishedAt ?? '')),
+    [productions]
+  );
+  const visibleOrders = showFinished ? finishedOrders : activeOrders;
+
+  const handleFinishOrder = (id: string) => {
+    onSaveProductions(
+      productions.map((p) =>
+        p.id === id ? { ...p, finishedAt: getTodayIso() } : p
+      )
+    );
+  };
+
+  const handleReopenOrder = (id: string) => {
+    onSaveProductions(
+      productions.map((p) => {
+        if (p.id !== id) return p;
+        const { finishedAt: _omit, ...rest } = p;
+        void _omit;
+        return rest;
+      })
+    );
+  };
+
+  // Automatic real-time schedule computed from live (active) productions & workshopConfig
   const schedule = useMemo(
-    () => buildProductionSchedule(productions, workshopConfig, { mode: 'standard' }),
-    [productions, workshopConfig]
+    () => buildProductionSchedule(activeOrders, workshopConfig, { mode: 'standard' }),
+    [activeOrders, workshopConfig]
   );
 
   // Preview summary for the modal draft
@@ -539,9 +577,36 @@ export const ProductionView: React.FC<ProductionViewProps> = ({
         </button>
       </div>
 
+      {/* Active / Finished toggle */}
+      <div className="flex bg-white p-1 rounded-xl border border-stone-200 shadow-2xs">
+        <button
+          type="button"
+          onClick={() => setShowFinished(false)}
+          className={`flex-1 py-2 rounded-lg text-xs font-bold transition ${
+            !showFinished
+              ? 'bg-[#51344D] text-white shadow-2xs'
+              : 'text-stone-600 hover:text-[#2e1f14]'
+          }`}
+        >
+          Activas ({activeOrders.length})
+        </button>
+        <button
+          type="button"
+          onClick={() => setShowFinished(true)}
+          className={`flex-1 py-2 rounded-lg text-xs font-bold transition inline-flex items-center justify-center gap-1.5 ${
+            showFinished
+              ? 'bg-[#E17726] text-white shadow-2xs'
+              : 'text-stone-600 hover:text-[#2e1f14]'
+          }`}
+        >
+          <Archive className="w-3.5 h-3.5 shrink-0" />
+          Finalizadas ({finishedOrders.length})
+        </button>
+      </div>
+
       {/* Production Orders List */}
       <div className="space-y-3.5">
-        {productions.map((order) => {
+        {visibleOrders.map((order) => {
           const summary =
             schedule.summaries[order.id] ??
             evaluateProductionSummary(order, workshopConfig);
@@ -595,6 +660,46 @@ export const ProductionView: React.FC<ProductionViewProps> = ({
                 </div>
 
                 <div className="flex items-center gap-1 shrink-0">
+                  {order.finishedAt ? (
+                    <button
+                      type="button"
+                      onClick={() => handleReopenOrder(order.id)}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-bold text-[#51344D] bg-[#F4EEF3] hover:bg-[#51344D] hover:text-white rounded-xl transition"
+                      title="Reabrir producción (vuelve a las activas)"
+                    >
+                      <ArchiveRestore className="w-3.5 h-3.5 shrink-0" />
+                      Reabrir
+                    </button>
+                  ) : confirmFinishOrderId === order.id ? (
+                    <div className="flex items-center gap-1 bg-emerald-50 border border-emerald-200 rounded-xl px-2 py-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          handleFinishOrder(order.id);
+                          setConfirmFinishOrderId(null);
+                        }}
+                        className="text-[11px] font-extrabold text-white bg-emerald-600 hover:bg-emerald-700 px-2 py-0.5 rounded-lg"
+                      >
+                        Sí, terminar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmFinishOrderId(null)}
+                        className="text-[11px] font-semibold text-stone-600 px-1.5 py-0.5"
+                      >
+                        No
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setConfirmFinishOrderId(order.id)}
+                      className="p-2 text-stone-500 hover:text-emerald-700 hover:bg-emerald-50 rounded-xl transition"
+                      title="Dar por terminada (se oculta de las activas)"
+                    >
+                      <Archive className="w-4 h-4" />
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => openEditOrderForm(order)}
@@ -1049,6 +1154,14 @@ export const ProductionView: React.FC<ProductionViewProps> = ({
             </div>
           );
         })}
+
+        {visibleOrders.length === 0 && showFinished && (
+          <div className="bg-white rounded-2xl p-8 text-center border border-dashed border-stone-300">
+            <p className="text-sm text-stone-600 font-medium">
+              Aún no hay producciones finalizadas.
+            </p>
+          </div>
+        )}
 
         {productions.length === 0 && (
           <div className="bg-white rounded-2xl p-8 text-center border border-dashed border-stone-300">
